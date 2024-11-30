@@ -1,0 +1,11 @@
+lan_speed
+*.o
+
+# IDE-specific files (if using any IDE)
+.idea/
+.vscode/
+*.code-workspace
+
+# Miscellaneous
+.DS_Store   
+Thumbs.db
