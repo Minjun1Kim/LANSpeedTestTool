@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LAN Speed Test</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <h1>LAN Speed Test</h1>
+    <form id="testForm">
+        <label for="test_type">Test Type:</label>
+        <select id="test_type" name="test_type">
+            <option value="upload">Upload</option>
+            <option value="download">Download</option>
+            <option value="ping">Ping</option>
+            <option value="jitter">Jitter</option>
+        </select><br><br>
+
+        <label for="server_address">Server Address:</label>
+        <input type="text" id="server_address" name="server_address" required><br><br>
+
+        <label for="size">Packet Size (bytes):</label>
+        <input type="number" id="size" name="size" value="1024"><br><br>
+
+        <label for="duration">Duration (seconds):</label>
+        <input type="number" id="duration" name="duration" value="10"><br><br>
+
+        <button type="submit">Start Test</button>
+    </form>
+
+    <h2>Results</h2>
+    <pre id="results"></pre>
+
+    <h2>Graph</h2>
+    <canvas id="resultsChart"></canvas>
+
+    <script>
+        const form = document.getElementById('testForm');
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const data = {
+                test_type: document.getElementById('test_type').value,
+                server_address: document.getElementById('server_address').value,
+                size: document.getElementById('size').value,
+                duration: document.getElementById('duration').value
+            };
+
+            const response = await fetch('/start_test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            const result = await response.json();
+            document.getElementById('results').textContent = JSON.stringify(result, null, 2);
+
+            // if (result.status === 'success') {
+            //     // Parse and visualize results (example: upload/download throughput)
+            //     const outputLines = result.output.split('\n');
+            //     const dataPoints = outputLines.map((line, index) => ({
+            //         x: index,
+            //         y: parseFloat(line.match(/~([0-9.]+) Mbps/)?.[1] || 0)
+            //     }));
+
+            //     new Chart(document.getElementById('resultsChart'), {
+            //         type: 'line',
+            //         data: {
+            //             datasets: [{
+            //                 label: 'Throughput (Mbps)',
+            //                 data: dataPoints,
+            //                 borderColor: 'blue',
+            //                 fill: false
+            //             }]
+            //         },
+            //         options: {
+            //             scales: {
+            //                 x: { title: { display: true, text: 'Time (seconds)' } },
+            //                 y: { title: { display: true, text: 'Throughput (Mbps)' } }
+            //             }
+            //         }
+            //     });
+            // }
+
+            if (result.status === 'success' && result.rtt_values) {
+                const dataPoints = result.rtt_values.map((value, index) => ({
+                    x: index + 1,
+                    y: value
+                }));
+
+                new Chart(document.getElementById('resultsChart'), {
+                    type: 'line',
+                    data: {
+                        datasets: [{
+                            label: 'RTT (microseconds)',
+                            data: dataPoints,
+                            borderColor: 'blue',
+                            fill: false
+                        }]
+                    },
+                    options: {
+                        scales: {
+                            x: { title: { display: true, text: 'Packet Number' } },
+                            y: { title: { display: true, text: 'RTT (microseconds)' } }
+                        }
+                    }
+                });
+            }
+        });
+    </script>
+</body>
+</html>
