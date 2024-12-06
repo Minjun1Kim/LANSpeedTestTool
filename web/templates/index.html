@@ -38,8 +38,11 @@
 
     <script>
         const form = document.getElementById('testForm');
+        let chart; // Declare chart globally
+
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
+
             const data = {
                 test_type: document.getElementById('test_type').value,
                 server_address: document.getElementById('server_address').value,
@@ -47,66 +50,82 @@
                 duration: document.getElementById('duration').value
             };
 
+            // Send request to Flask server
             const response = await fetch('/start_test', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(data)
             });
+
             const result = await response.json();
             document.getElementById('results').textContent = JSON.stringify(result, null, 2);
 
-            // if (result.status === 'success') {
-            //     // Parse and visualize results (example: upload/download throughput)
-            //     const outputLines = result.output.split('\n');
-            //     const dataPoints = outputLines.map((line, index) => ({
-            //         x: index,
-            //         y: parseFloat(line.match(/~([0-9.]+) Mbps/)?.[1] || 0)
-            //     }));
-
-            //     new Chart(document.getElementById('resultsChart'), {
-            //         type: 'line',
-            //         data: {
-            //             datasets: [{
-            //                 label: 'Throughput (Mbps)',
-            //                 data: dataPoints,
-            //                 borderColor: 'blue',
-            //                 fill: false
-            //             }]
-            //         },
-            //         options: {
-            //             scales: {
-            //                 x: { title: { display: true, text: 'Time (seconds)' } },
-            //                 y: { title: { display: true, text: 'Throughput (Mbps)' } }
-            //             }
-            //         }
-            //     });
-            // }
-
             if (result.status === 'success' && result.rtt_values) {
                 const dataPoints = result.rtt_values.map((value, index) => ({
-                    x: index + 1,
-                    y: value
+                    x: index + 1,  // Packet number
+                    y: value       // RTT in microseconds
                 }));
 
-                new Chart(document.getElementById('resultsChart'), {
+                // If chart already exists, update it
+                if (chart) {
+                    chart.data.datasets[0].data = dataPoints; // Update dataset
+                    chart.update(); // Redraw chart
+                } else {
+                    // Create a new chart if it doesn't exist
+                    chart = new Chart(document.getElementById('resultsChart'), {
                     type: 'line',
                     data: {
+                        labels: result.rtt_values.map((_, index) => index + 1), // Generate labels (Packet numbers)
                         datasets: [{
                             label: 'RTT (microseconds)',
-                            data: dataPoints,
+                            data: result.rtt_values, // Use RTT values directly
                             borderColor: 'blue',
                             fill: false
                         }]
                     },
                     options: {
+                        responsive: true,
+                        maintainAspectRatio: true, // Ensures the chart maintains its aspect ratio
                         scales: {
-                            x: { title: { display: true, text: 'Packet Number' } },
-                            y: { title: { display: true, text: 'RTT (microseconds)' } }
+                            x: {
+                                title: {
+                                    display: true,
+                                    text: 'Packet Number'
+                                },
+                                ticks: {
+                                    autoSkip: false // Ensures all labels are shown
+                                }
+                            },
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: 'RTT (microseconds)'
+                                },
+                                beginAtZero: true // Starts the Y-axis at zero
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                display: true
+                            }
                         }
                     }
-                });
+                    });
+                }
+
+                // Display jitter
+                const jitterElement = document.getElementById('jitter');
+                if (!jitterElement) {
+                    const newJitterElement = document.createElement('p');
+                    newJitterElement.id = 'jitter';
+                    newJitterElement.textContent = `Average Jitter: ${result.jitter} microseconds`;
+                    document.body.appendChild(newJitterElement);
+                } else {
+                    jitterElement.textContent = `Average Jitter: ${result.jitter} microseconds`;
+                }
             }
         });
+
     </script>
 </body>
 </html>

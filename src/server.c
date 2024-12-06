@@ -7,6 +7,7 @@
 #include <sys/time.h>
 
 #define BUFFER_SIZE 1024
+#define MAX_PACKETS 10
 
 void handle_upload(int client_sock) {
     char buffer[BUFFER_SIZE];
@@ -62,28 +63,67 @@ void handle_ping(int client_sock) {
 void handle_jitter(int client_sock) {
     char buffer[BUFFER_SIZE];
     struct timeval start, end;
-    long rtt_values[100];
+    long rtt_values[MAX_PACKETS];
     int count = 0;
 
-    while (count < 100) { // Collect up to 100 RTT samples
+    memset(rtt_values, 0, sizeof(rtt_values));
+
+    // Collect RTT samples
+    while (count < MAX_PACKETS) {
         gettimeofday(&start, NULL);
-        if (recv(client_sock, buffer, sizeof(buffer), 0) > 0) {
-            send(client_sock, buffer, sizeof(buffer), 0);
-            gettimeofday(&end, NULL);
-            rtt_values[count++] = (end.tv_sec - start.tv_sec) * 1000000L + (end.tv_usec - start.tv_usec);
-        } else {
+
+        // Receive a packet from the client
+        int bytes_received = recv(client_sock, buffer, sizeof(buffer), 0);
+        if (bytes_received <= 0) {
+            break; // End of data or error
+        }
+
+        // Send echo back to the client
+        if (send(client_sock, buffer, bytes_received, 0) < 0) {
+            perror("Failed to send echo");
             break;
         }
+
+        gettimeofday(&end, NULL);
+
+        // Calculate RTT in microseconds
+        rtt_values[count++] = (end.tv_sec - start.tv_sec) * 1000000L + (end.tv_usec - start.tv_usec);
     }
 
-    // Calculate jitter as the average difference between consecutive RTTs
+    // Calculate jitter
     long jitter = 0;
     for (int i = 1; i < count; i++) {
         jitter += abs(rtt_values[i] - rtt_values[i - 1]);
     }
-    jitter /= (count - 1);
+    if (count > 1) { // Avoid division by zero
+        jitter /= (count - 1);
+    }
 
-    printf("Jitter Test: Average jitter = %ld microseconds\n", jitter);
+    // Construct JSON response
+    char json_response[BUFFER_SIZE * 4];
+    snprintf(json_response, sizeof(json_response), "{ \"rtt_values\": [");
+
+    for (int i = 0; i < count; i++) {
+        char rtt_str[16];
+        snprintf(rtt_str, sizeof(rtt_str), "%ld", rtt_values[i]);
+        strcat(json_response, rtt_str);
+        if (i < count - 1) {
+            strcat(json_response, ",");
+        }
+    }
+
+    strcat(json_response, "], \"jitter\": ");
+    char jitter_str[16];
+    snprintf(jitter_str, sizeof(jitter_str), "%ld", jitter);
+    strcat(json_response, jitter_str);
+    strcat(json_response, " }");
+
+    // Send JSON response to the client
+    if (send(client_sock, json_response, strlen(json_response), 0) < 0) {
+        perror("Failed to send JSON response");
+    }
+
+    printf("Jitter Test: Sent JSON response: %s\n", json_response);  // Log the JSON
 }
 
 void start_server(int port) {

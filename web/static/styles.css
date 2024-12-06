@@ -83,3 +83,10 @@ footer {
     font-size: 14px;
     color: #666;
 }
+
+#resultsChart {
+    width: 600px;
+    height: 400px;
+    max-width: 100%; /* Ensures it doesn't overflow the parent */
+    margin: 0 auto; /* Centers the chart */
+}
