@@ -1,128 +1,154 @@
 #include "../include/client.h"
+#include "../include/shared.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/time.h>
+#include <time.h>
+#include <netinet/ip_icmp.h>
+#include <math.h>
 
-// calculate the difference between two timevals
-long calculate_time_diff(struct timeval start, struct timeval end) {
-    return (end.tv_sec - start.tv_sec) * 1000000L + (end.tv_usec - start.tv_usec);
-}
+#define DATA_SIZE 32768
 
-
-void run_upload_test(char *address, int port, int size, int duration) {
+static int create_tcp_socket(char *address, int port) {
     int client_sock;
     struct sockaddr_in server_addr;
-    char *data = malloc(size);
-    char ack[32];
-    memset(data, 'A', size);
-    struct timeval start, end;
 
     client_sock = socket(AF_INET, SOCK_STREAM, 0);
     if (client_sock < 0) {
         perror("Socket creation failed");
-        free(data);
         exit(EXIT_FAILURE);
     }
 
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
-    inet_pton(AF_INET, address, &server_addr.sin_addr);
-
-    if (connect(client_sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        perror("Connection failed");
-        free(data);
+    if (inet_pton(AF_INET, address, &server_addr.sin_addr) <= 0) {
+        perror("Invalid server IP address");
         close(client_sock);
         exit(EXIT_FAILURE);
     }
+
+    if (connect(client_sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Connection failed");
+        close(client_sock);
+        exit(EXIT_FAILURE);
+    }
+
+    struct timeval timeout;
+    timeout.tv_sec = 2;  // Set timeout for 2 seconds
+    timeout.tv_usec = 0;
+
+    // Set socket timeout using setsockopt
+    if (setsockopt(client_sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
+        perror("setsockopt failed");
+        close(client_sock);
+        exit(EXIT_FAILURE);
+    }
+
+    return client_sock;
+}
+
+void run_udp_upload_test(char *address, int port, int duration) {}
+void run_udp_download_test(char *address, int port, int duration) {}
+void run_tcp_upload_test(char *address, int port, int duration) {
+    int client_sock = create_tcp_socket(address, port);
 
     // Step 1: Send the test type
     send(client_sock, "upload", strlen("upload"), 0);
 
-    // Step 2: Wait for acknowledgment
-    int ack_received = recv(client_sock, ack, sizeof(ack) - 1, 0);
-    if (ack_received <= 0 || strncmp(ack, "ACK", 3) != 0) {
-        perror("Server did not acknowledge test type");
-        free(data);
-        close(client_sock);
-        return;
+    char *data = malloc(DATA_SIZE);
+    memset(data, 'A', DATA_SIZE);
+    struct timespec start_time, end_time;
+    double total_elapsed_time = 0;
+    while (total_elapsed_time < 0.1) {
+        clock_gettime(CLOCK_MONOTONIC, &start_time);
+        long bytes_sent_i = send(client_sock, data, DATA_SIZE, 0);
+        if (bytes_sent_i < 0) {
+                perror("Data send failed");
+                break;
+            }
+        clock_gettime(CLOCK_MONOTONIC, &end_time);
+        double time_taken = (end_time.tv_sec - start_time.tv_sec) +
+                            (end_time.tv_nsec - start_time.tv_nsec) / 1e9;
+        total_elapsed_time += time_taken;
     }
 
     // Step 3: Start the upload test
-    gettimeofday(&start, NULL);
+    total_elapsed_time = 0;
     long bytes_sent = 0;
-    for (int i = 0; i < duration; i++) {
-        if (send(client_sock, data, size, 0) < 0) {
-            perror("Data send failed");
-            break;
-        }
-        bytes_sent += size;
-    }
-    gettimeofday(&end, NULL);
+    int iteration = 1;
+    while (total_elapsed_time < duration) {
+        clock_gettime(CLOCK_MONOTONIC, &start_time);
+        long bytes_sent_i = send(client_sock, data, DATA_SIZE, 0);
+        if (bytes_sent_i < 0) {
+                perror("Data send failed");
+                break;
+            }
+        clock_gettime(CLOCK_MONOTONIC, &end_time);
+        bytes_sent += bytes_sent_i;
+        double time_taken = (end_time.tv_sec - start_time.tv_sec) +
+                            (end_time.tv_nsec - start_time.tv_nsec) / 1e9;
 
-    long time_diff = calculate_time_diff(start, end);
-    printf("Upload Test: Sent %ld bytes in %ld microseconds (~%.2f Mbps)\n",
-           bytes_sent, time_diff, (bytes_sent * 8.0) / time_diff / 1e6);
+        total_elapsed_time += time_taken;
+        if (total_elapsed_time >= iteration) {
+            double iter_elapsed_time = total_elapsed_time - iteration + 1;
+            printf("Upload Test: Sent %ld bytes in %.6f miliseconds (~%.2f Mbps)\n",
+                    bytes_sent, iter_elapsed_time * 1000, (bytes_sent * 8.0) / iter_elapsed_time / 1e6);
+            iteration++;
+            bytes_sent = 0;
+        }
+    }
 
     free(data);
     close(client_sock);
 }
 
 
-void run_download_test(char *address, int port, int size, int duration) {
-    int client_sock;
-    struct sockaddr_in server_addr;
-    char *data = malloc(size);
-    struct timeval start, end;
-
-    client_sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (client_sock < 0) {
-        perror("Socket creation failed");
-        free(data);
-        exit(EXIT_FAILURE);
-    }
-
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    inet_pton(AF_INET, address, &server_addr.sin_addr);
-
-    if (connect(client_sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        perror("Connection failed");
-        free(data);
-        close(client_sock);
-        exit(EXIT_FAILURE);
-    }
+void run_tcp_download_test(char *address, int port, int duration) {
+    int client_sock = create_tcp_socket(address, port);
 
     send(client_sock, "download", strlen("download"), 0);
 
-    gettimeofday(&start, NULL);
-    long bytes_received = 0;
-    for (int i = 0; i < duration; i++) {
-        int bytes = recv(client_sock, data, size, 0);
-        if (bytes <= 0) {
-            perror("Data receive failed");
-            break;
+    char *data = malloc(DATA_SIZE);
+    struct timespec start_time, end_time;
+    double total_elapsed_time = 0;
+    long bytes_recieved = 0;
+    int iteration = 1;
+    while (total_elapsed_time < duration) {
+        clock_gettime(CLOCK_MONOTONIC, &start_time);
+        long bytes_recieved_i = recv(client_sock, data, DATA_SIZE, 0);
+        if (bytes_recieved_i < 0) {
+                perror("Data recieve failed");
+                break;
+            }
+        clock_gettime(CLOCK_MONOTONIC, &end_time);
+        bytes_recieved += bytes_recieved_i;
+        double time_taken = (end_time.tv_sec - start_time.tv_sec) +
+                            (end_time.tv_nsec - start_time.tv_nsec) / 1e9;
+        total_elapsed_time += time_taken;
+        if (total_elapsed_time >= iteration) {
+            double iter_elapsed_time = total_elapsed_time - iteration + 1;
+            printf("Download Test: Recieved %ld bytes in %.6f miliseconds (~%.2f Mbps)\n",
+                    bytes_recieved, iter_elapsed_time * 1000, (bytes_recieved * 8.0) / iter_elapsed_time / 1e6);
+            iteration++;
+            bytes_recieved = 0;
         }
-        bytes_received += bytes;
     }
-    gettimeofday(&end, NULL);
-
-    long time_diff = calculate_time_diff(start, end);
-    printf("Upload Test: Received %ld bytes in %ld microseconds (~%.2f Mbps)\n",
-       bytes_received, time_diff, 
-       (bytes_received * 8.0) / (time_diff > 0 ? time_diff : 1) / 1e6);
 
     free(data);
     close(client_sock);
 }
 
-void run_ping_test(char *address, int duration) {
-    struct sockaddr_in server_addr;
-    struct timeval start, end;
+void run_ping_test(char *address, int port, int size, int duration, int interval) {
+    struct timespec start_time, end_time;
+    float packets_lost = 0.0;
+    double rtts[duration];
+    char *buffer = "ping";
+
     int sock;
-    char buffer[64] = "Ping test message";
+    struct sockaddr_in server_addr;
 
     sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
@@ -131,83 +157,83 @@ void run_ping_test(char *address, int duration) {
     }
 
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(12345); // Arbitrary port for UDP ping
-    inet_pton(AF_INET, address, &server_addr.sin_addr);
+    server_addr.sin_port = htons(port);
+    if (inet_pton(AF_INET, address, &server_addr.sin_addr) <= 0) {
+        perror("Invalid server IP address");
+        close(sock);
+        exit(EXIT_FAILURE);
+    }
 
-    send(sock, "ping", strlen("ping"), 0);
+    struct timeval timeout;
+    timeout.tv_sec = 2;  // Set timeout for 2 seconds
+    timeout.tv_usec = 0;
+
+    // Set socket timeout using setsockopt
+    if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
+        perror("setsockopt failed");
+        close(sock);
+        exit(EXIT_FAILURE);
+    }
+    
+    if (sendto(sock, buffer, strlen(buffer), 0, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Send Ping test type failed");
+        return;
+    }
+
+    char ack[4];
+    socklen_t addr_len = sizeof(server_addr);
+    int len = recvfrom(sock, ack, 4, 0, (struct sockaddr *)&server_addr, &addr_len);
+    if (len < 0) {
+        perror("Receive failed1");
+        return;
+    }
+
+    if (strcmp(ack, "ack") != 0) {
+        perror("Receive ack failed");
+        return;
+    }
+
+    if (sendto(sock, &size, sizeof(size), 0, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Send packet size failed");
+        return;
+    }
+
+    char data[size];
+    memset(data, 'A', size);
 
     for (int i = 0; i < duration; i++) {
-        gettimeofday(&start, NULL);
-        if (sendto(sock, buffer, strlen(buffer), 0, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        sleep(interval);
+        clock_gettime(CLOCK_MONOTONIC, &start_time);
+        
+        // Send a ping message to the server
+        if (sendto(sock, data, strlen(data), 0, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+            packets_lost++;
             perror("Ping send failed");
-            break;
+            continue;
         }
 
-        socklen_t addr_len = sizeof(server_addr);
-        if (recvfrom(sock, buffer, sizeof(buffer), 0, (struct sockaddr*)&server_addr, &addr_len) < 0) {
+        // Receive the ping reply from the server
+        if (recvfrom(sock, data, size, 0, (struct sockaddr*)&server_addr, &addr_len) < 0) {
+            packets_lost++;
             perror("Ping receive failed");
-            break;
+            continue;
         }
-        gettimeofday(&end, NULL);
-
-        long time_diff = calculate_time_diff(start, end);
-        printf("Ping %d: RTT = %ld microseconds\n", i + 1, time_diff);
+        clock_gettime(CLOCK_MONOTONIC, &end_time);
+        
+        double rtt = (end_time.tv_sec - start_time.tv_sec) +
+                            (end_time.tv_nsec - start_time.tv_nsec) / 1e9;
+        rtt *= 1000;
+        rtts[i] = rtt;
+        printf("Ping %d: RTT = %.4f ms\n", i + 1, rtt);
     }
+
+    double jitter = 0;
+    for (int i = 1; i < duration; i++) {   
+        jitter += fabs(rtts[i] - rtts[i-1]);
+    }
+    jitter /= (duration - packets_lost - 1);
+    printf("Jitter: %.4f\n", jitter);
+    printf("Packet Loss: %.2f%%\n", g(packets_lost/(float)duration)*100);
 
     close(sock);
-}
-
-void run_jitter_test(char *address, int port, int size, int duration) {
-    int client_sock;
-    struct sockaddr_in server_addr;
-    char *data = malloc(size);
-    struct timeval start, end;
-    long rtt_values[duration];
-    int count = 0;
-
-    client_sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (client_sock < 0) {
-        perror("Socket creation failed");
-        free(data);
-        exit(EXIT_FAILURE);
-    }
-
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    inet_pton(AF_INET, address, &server_addr.sin_addr);
-
-    if (connect(client_sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        perror("Connection failed");
-        free(data);
-        close(client_sock);
-        exit(EXIT_FAILURE);
-    }
-
-    send(client_sock, "jitter", strlen("jitter"), 0);
-
-    for (int i = 0; i < duration; i++) {
-        gettimeofday(&start, NULL);
-        if (send(client_sock, data, size, 0) < 0) {
-            perror("Data send failed");
-            break;
-        }
-        if (recv(client_sock, data, size, 0) <= 0) {
-            perror("Data receive failed");
-            break;
-        }
-        gettimeofday(&end, NULL);
-
-        rtt_values[count++] = calculate_time_diff(start, end);
-    }
-
-    long jitter = 0;
-    for (int i = 1; i < count; i++) {
-        jitter += abs(rtt_values[i] - rtt_values[i - 1]);
-    }
-    jitter /= (count - 1);
-
-    printf("Jitter Test: Average jitter = %ld microseconds\n", jitter);
-
-    free(data);
-    close(client_sock);
 }

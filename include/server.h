@@ -1,10 +1,13 @@
+#include "../include/shared.h"
+
 #ifndef SERVER_H
 #define SERVER_H
 
 void start_server(int port);
-void handle_upload(int client_sock);
-void handle_download(int client_sock, int size, int duration);
-void handle_ping(int client_sock);
-void handle_jitter(int client_sock);
+void handle_tcp_upload(int client_sock);
+void handle_tcp_download(int client_sock);
+void handle_udp_upload(client_data_t* data);
+void handle_udp_download(client_data_t* data);
+void handle_ping(client_data_t* data);
 
 #endif

@@ -9,11 +9,13 @@ void print_usage() {
     printf("Usage: lan_speed [options]\n");
     printf("Options:\n");
     printf("  -m, --mode       Mode of operation: server or client\n");
-    printf("  -t, --test       Test type: upload, download, ping, jitter\n");
+    printf("  -t, --test       Test type: upload, download, ping\n");
+    printf("  -r, --protocol   Protocol used for upload/download tests, tcp or udp (default: T)\n");
     printf("  -a, --address    Server address (for client mode)\n");
     printf("  -p, --port       Port number (default: 8080)\n");
-    printf("  -s, --size       Packet size in bytes (default: 1024)\n");
-    printf("  -d, --duration   Test duration in seconds (default: 10)\n");
+    printf("  -s, --size       Packet size in bytes for ping test (default: 64)\n");
+    printf("  -d, --duration   Test duration in seconds (packets number for ping) (default: 10)\n");
+    printf("  -i, --interval   Interval Between Pings in Seconds (default: 1)\n");
     printf("  -h, --help       Display this help message\n");
     exit(0);
 }
@@ -21,20 +23,24 @@ void print_usage() {
 int main(int argc, char *argv[]) {
     char *mode = NULL;
     char *test = NULL;
+    char *protocol = "tcp";
     char *address = NULL;
     int port = 8080;
-    int size = 1024;
+    int size = 64;
     int duration = 10;
+    int interval = 1;
 
     int opt;
-    while ((opt = getopt(argc, argv, "m:t:a:p:s:d:h")) != -1) {
+    while ((opt = getopt(argc, argv, "m:t:r:a:p:s:d:i:h")) != -1) {
         switch (opt) {
             case 'm': mode = optarg; break;
             case 't': test = optarg; break;
+            case 'r': protocol = optarg; break;
             case 'a': address = optarg; break;
             case 'p': port = atoi(optarg); break;
             case 's': size = atoi(optarg); break;
             case 'd': duration = atoi(optarg); break;
+            case 'i': interval = atoi(optarg); break;
             case 'h':
             default: print_usage();
         }
@@ -54,15 +60,28 @@ int main(int argc, char *argv[]) {
             print_usage();
         }
 
+        if (strcmp(protocol, "tcp") != 0  && strcmp(protocol, "udp") != 0) {
+            fprintf(stderr, "Error: Invalid Protocol, use T (TCP) or U (UDP).\n");
+            print_usage();
+        }
+
         // Handle the test type for client mode
         if (strcmp(test, "upload") == 0) {
-            run_upload_test(address, port, size, duration);
+            if (strcmp(protocol, "tcp") == 0) {
+                run_tcp_upload_test(address, port, duration);
+            }
+            else {
+                run_udp_upload_test(address, port, duration);
+            }
         } else if (strcmp(test, "download") == 0) {
-            run_download_test(address, port, size, duration);
+            if (strcmp(protocol, "tcp") == 0) {
+                run_tcp_download_test(address, port, duration);
+            }
+            else {
+                run_udp_download_test(address, port, duration);
+            }
         } else if (strcmp(test, "ping") == 0) {
-            run_ping_test(address, duration);
-        } else if (strcmp(test, "jitter") == 0) {
-            run_jitter_test(address, port, size, duration);
+            run_ping_test(address, port, size, duration, interval);
         } else {
             fprintf(stderr, "Invalid test type: %s\n", test);
             print_usage();
