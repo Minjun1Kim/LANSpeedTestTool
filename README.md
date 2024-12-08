@@ -27,6 +27,7 @@ Options:
   -a, --address    Server address (for client mode)
   -p, --port       Port number (default: 8080)
   -s, --size       Packet size in bytes (default: 1024)
+  -n, --num        Number of packets (for jitter test, default: 10)
   -d, --duration   Test duration in seconds (default: 10)
   -h, --help       Display this help message
 ```
@@ -53,27 +54,60 @@ Options:
     ```
 
     ```bash
-    ./lan_speed -m client -t jitter -a 127.0.0.1 -p 8080 -s 1024 -d 10
+    ./lan_speed -m client -t jitter -a 127.0.0.1 -p 8080 -s 1024 -n 50
     ```
+    In this example, the jitter test uses a packet size of 1024 bytes and sends 50 packets.
 
 ## How it works:
 
 1. Server:
 
-    Listens on the specified port. <br/>
+    Listens on the specified TCP port. <br/>
     Waits for incoming client connections. <br/>
-    Handles tests based on the test type received from the client. <br/>
+    Receives test type and parameters from the client. <br/>
+    Executes the requested test and returns results. <br/>
 
 2. Client:
 
-    Connects to the server and informs it of the test type (e.g., upload, download, etc.). <br/>
+    Connects to the server and specifies the test type and parameters. <br/>
+    Sends/receives data as per the test requirements. <br/>
     Executes the specified test and reports results like throughput, RTT, or jitter. <br/>
 
 3. Metrics:
 
     Throughput: Calculated in Mbps (bits per second). <br/>
     RTT: Round-trip time for ping is reported in microseconds. <br/>
-    Jitter: Average variation in RTT between packets. <br/>
+    Jitter: Average variation in RTT between consecutive packets. <br/>
+
+## Running the Web Interface
+A simple Flask-based web UI is provided in the /web directory: <br/>
+1. Navigate to the /web directory:
+
+```shell
+cd web
+```
+
+2. Set up a virtual environment (recommended): <br/>
+
+```shell
+python3 -m venv venv
+source venv/bin/activate
+pip install flask
+```
+
+3. Run the Flask server: <br/>
+
+```shell
+python3 app.py
+```
+
+4. Open your browser and go to: <br/>
+
+http://127.0.0.1:5000 <br/>
+
+Use the web form to run tests. The results will be displayed on the page, and jitter tests can be visualized as a graph. <br/>
+Note: use 127:0.0.1 as the server address in the web form. <br/>
+
 
 ## Development Notes
 1. Protocols Used <br/>

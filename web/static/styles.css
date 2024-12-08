@@ -90,3 +90,10 @@ footer {
     max-width: 100%; /* Ensures it doesn't overflow the parent */
     margin: 0 auto; /* Centers the chart */
 }
+
+#results {
+    white-space: nowrap;
+    overflow-x: auto;
+    display: block;
+    max-width: 100%;
+}

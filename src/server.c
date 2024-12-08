@@ -44,7 +44,7 @@ void handle_download(int client_sock, int size, int duration) {
     gettimeofday(&end, NULL);
 
     long time_diff = (end.tv_sec - start.tv_sec) * 1000000L + (end.tv_usec - start.tv_usec);
-    printf("Download Test: Sent %d bytes for %d seconds\n", size * duration, time_diff);
+    printf("Download Test: Sent %d bytes for %ld seconds\n", size * duration, time_diff);
 
     free(data);
 }
@@ -60,20 +60,20 @@ void handle_ping(int client_sock) {
     }
 }
 
-void handle_jitter(int client_sock) {
-    char buffer[BUFFER_SIZE];
+void handle_jitter(int client_sock, int num_packets, int packet_size) {
+    char buffer[packet_size];
     struct timeval start, end;
-    long rtt_values[MAX_PACKETS];
+    long *rtt_values = malloc(sizeof(long) * num_packets);
     int count = 0;
 
-    memset(rtt_values, 0, sizeof(rtt_values));
+    memset(rtt_values, 0, sizeof(long) * num_packets);
 
     // Collect RTT samples
-    while (count < MAX_PACKETS) {
+    while (count < num_packets) {
         gettimeofday(&start, NULL);
 
         // Receive a packet from the client
-        int bytes_received = recv(client_sock, buffer, sizeof(buffer), 0);
+        int bytes_received = recv(client_sock, buffer, packet_size, 0);
         if (bytes_received <= 0) {
             break; // End of data or error
         }
@@ -93,9 +93,9 @@ void handle_jitter(int client_sock) {
     // Calculate jitter
     long jitter = 0;
     for (int i = 1; i < count; i++) {
-        jitter += abs(rtt_values[i] - rtt_values[i - 1]);
+        jitter += labs(rtt_values[i] - rtt_values[i - 1]);
     }
-    if (count > 1) { // Avoid division by zero
+    if (count > 1) {
         jitter /= (count - 1);
     }
 
@@ -104,7 +104,7 @@ void handle_jitter(int client_sock) {
     snprintf(json_response, sizeof(json_response), "{ \"rtt_values\": [");
 
     for (int i = 0; i < count; i++) {
-        char rtt_str[16];
+        char rtt_str[32];
         snprintf(rtt_str, sizeof(rtt_str), "%ld", rtt_values[i]);
         strcat(json_response, rtt_str);
         if (i < count - 1) {
@@ -113,7 +113,7 @@ void handle_jitter(int client_sock) {
     }
 
     strcat(json_response, "], \"jitter\": ");
-    char jitter_str[16];
+    char jitter_str[32];
     snprintf(jitter_str, sizeof(jitter_str), "%ld", jitter);
     strcat(json_response, jitter_str);
     strcat(json_response, " }");
@@ -123,14 +123,16 @@ void handle_jitter(int client_sock) {
         perror("Failed to send JSON response");
     }
 
-    printf("Jitter Test: Sent JSON response: %s\n", json_response);  // Log the JSON
+    printf("Jitter Test: Sent JSON response: %s\n", json_response);
+
+    free(rtt_values);
 }
 
 void start_server(int port) {
     int server_sock, client_sock;
     struct sockaddr_in server_addr, client_addr;
     socklen_t addr_size;
-    char test_type[32]; 
+    char test_type[32];
 
     server_sock = socket(AF_INET, SOCK_STREAM, 0);
     if (server_sock < 0) {
@@ -161,7 +163,7 @@ void start_server(int port) {
         printf("Client connected\n");
 
         memset(test_type, 0, sizeof(test_type));
-        int bytes_received = recv(client_sock, test_type, sizeof(test_type) - 1, 0); // Read only the test type
+        int bytes_received = recv(client_sock, test_type, sizeof(test_type) - 1, 0);
         if (bytes_received <= 0) {
             perror("Error reading test type");
             close(client_sock);
@@ -173,15 +175,31 @@ void start_server(int port) {
         // Step 2: Send acknowledgment to client
         send(client_sock, "ACK", 3, 0);
 
-        // Step 3: Handle the requested test
+        // If test is jitter, receive packet_size and num_packets from the client
+        int packet_size, num_packets;
+
         if (strcmp(test_type, "upload") == 0) {
             handle_upload(client_sock);
         } else if (strcmp(test_type, "download") == 0) {
+            // Default values or you can modify to receive from client similarly
             handle_download(client_sock, 1024, 10);
         } else if (strcmp(test_type, "ping") == 0) {
             handle_ping(client_sock);
         } else if (strcmp(test_type, "jitter") == 0) {
-            handle_jitter(client_sock);
+            // Receive packet_size
+            if (recv(client_sock, &packet_size, sizeof(packet_size), 0) <= 0) {
+                perror("Failed to receive packet_size for jitter test");
+                close(client_sock);
+                continue;
+            }
+            // Receive num_packets
+            if (recv(client_sock, &num_packets, sizeof(num_packets), 0) <= 0) {
+                perror("Failed to receive num_packets for jitter test");
+                close(client_sock);
+                continue;
+            }
+
+            handle_jitter(client_sock, num_packets, packet_size);
         } else {
             printf("Unknown test type: %s\n", test_type);
         }

@@ -1,3 +1,4 @@
+# Build artifacts
 lan_speed
 *.o
 
@@ -6,6 +7,13 @@ lan_speed
 .vscode/
 *.code-workspace
 
-# Miscellaneous
-.DS_Store   
+# Virtual environment folder
+venv/
+
+# Python cache files
+__pycache__/
+
+# Temporary files
+.DS_Store
 Thumbs.db
+*.nfs

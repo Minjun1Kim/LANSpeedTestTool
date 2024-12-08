@@ -189,62 +189,83 @@ void run_ping_test(char *address, int duration) {
     close(sock);
 }
 
-void run_jitter_test(char *address, int port, int size, int duration) {
-    int client_sock;
-    struct sockaddr_in server_addr;
-    char buffer[BUFFER_SIZE];
-    char send_data[BUFFER_SIZE];
-    long rtt_values[100];
-    int rtt_count = 0;
+void run_jitter_test(char *address, int port, int packet_size, int num_packets) {
+    char *buffer = malloc(packet_size > BUFFER_SIZE ? packet_size : BUFFER_SIZE);
+    char send_data[packet_size];
+    long rtt_values[num_packets];
     long jitter = 0;
 
-    memset(send_data, 'A', sizeof(send_data)); // Fill with dummy data
+    memset(send_data, 'A', packet_size); // Fill with dummy data
 
-    client_sock = socket(AF_INET, SOCK_STREAM, 0);
+    int client_sock = socket(AF_INET, SOCK_STREAM, 0);
     if (client_sock < 0) {
         perror("Socket creation failed");
+        free(buffer);
         exit(EXIT_FAILURE);
     }
 
+    struct sockaddr_in server_addr = {0};
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
     inet_pton(AF_INET, address, &server_addr.sin_addr);
 
-    if (connect(client_sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+    if (connect(client_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
         perror("Connection failed");
+        free(buffer);
         close(client_sock);
         exit(EXIT_FAILURE);
     }
 
     // Step 1: Send "jitter" test type to server
-    send(client_sock, "jitter", strlen("jitter"), 0);
+    if (send(client_sock, "jitter", strlen("jitter"), 0) < 0) {
+        perror("Failed to send test type");
+        free(buffer);
+        close(client_sock);
+        exit(EXIT_FAILURE);
+    }
 
     // Step 2: Receive and discard ACK message
-    memset(buffer, 0, sizeof(buffer));
-    if (recv(client_sock, buffer, sizeof(buffer) - 1, 0) <= 0) {
+    memset(buffer, 0, packet_size);
+    if (recv(client_sock, buffer, packet_size - 1, 0) <= 0) {
         perror("Failed to receive ACK");
+        free(buffer);
         close(client_sock);
         return;
     }
     if (strncmp(buffer, "ACK", 3) != 0) {
         fprintf(stderr, "Unexpected response: %s\n", buffer);
+        free(buffer);
         close(client_sock);
         return;
     }
 
-    // Step 3: Send packets to the server and receive echoes
+    // **NEW**: Send packet_size and num_packets to the server
+    if (send(client_sock, &packet_size, sizeof(packet_size), 0) < 0) {
+        perror("Failed to send packet_size");
+        free(buffer);
+        close(client_sock);
+        return;
+    }
+    if (send(client_sock, &num_packets, sizeof(num_packets), 0) < 0) {
+        perror("Failed to send num_packets");
+        free(buffer);
+        close(client_sock);
+        return;
+    }
+
+    // Step 3: Send packets to the server and measure RTTs
     struct timeval start, end;
-    for (int i = 0; i < MAX_PACKETS; i++) {
+    for (int i = 0; i < num_packets; i++) {
         gettimeofday(&start, NULL);
 
         // Send data to the server
-        if (send(client_sock, send_data, size, 0) < 0) {
+        if (send(client_sock, send_data, packet_size, 0) < 0) {
             perror("Failed to send data");
             break;
         }
 
         // Receive echo from server
-        if (recv(client_sock, buffer, size, 0) < 0) {
+        if (recv(client_sock, buffer, packet_size, 0) < 0) {
             perror("Failed to receive data");
             break;
         }
@@ -256,14 +277,16 @@ void run_jitter_test(char *address, int port, int size, int duration) {
     }
 
     // Step 4: Receive JSON response from server
-    memset(buffer, 0, sizeof(buffer));
-    if (recv(client_sock, buffer, sizeof(buffer) - 1, 0) <= 0) {
+    memset(buffer, 0, packet_size);
+    if (recv(client_sock, buffer, packet_size - 1, 0) <= 0) {
         perror("Failed to receive JSON response");
+        free(buffer);
         close(client_sock);
         return;
     }
 
     // Step 5: Parse the JSON response
+    int rtt_count = 0;
     parse_json_response(buffer, rtt_values, &rtt_count, &jitter);
 
     // Step 6: Print RTT values and jitter as JSON
@@ -279,5 +302,6 @@ void run_jitter_test(char *address, int port, int size, int duration) {
     printf("  \"jitter\": %ld\n", jitter);
     printf("}\n");
 
+    free(buffer);
     close(client_sock);
 }

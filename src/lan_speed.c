@@ -13,6 +13,7 @@ void print_usage() {
     printf("  -a, --address    Server address (for client mode)\n");
     printf("  -p, --port       Port number (default: 8080)\n");
     printf("  -s, --size       Packet size in bytes (default: 1024)\n");
+    printf("  -n, --num        Number of packets (default: 10)\n");
     printf("  -d, --duration   Test duration in seconds (default: 10)\n");
     printf("  -h, --help       Display this help message\n");
     exit(0);
@@ -25,15 +26,17 @@ int main(int argc, char *argv[]) {
     int port = 8080;
     int size = 1024;
     int duration = 10;
+    int num_packets = 10;
 
     int opt;
-    while ((opt = getopt(argc, argv, "m:t:a:p:s:d:h")) != -1) {
+    while ((opt = getopt(argc, argv, "m:t:a:p:s:n:d:h")) != -1) {
         switch (opt) {
             case 'm': mode = optarg; break;
             case 't': test = optarg; break;
             case 'a': address = optarg; break;
             case 'p': port = atoi(optarg); break;
             case 's': size = atoi(optarg); break;
+            case 'n': num_packets = atoi(optarg); break;
             case 'd': duration = atoi(optarg); break;
             case 'h':
             default: print_usage();
@@ -62,7 +65,7 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(test, "ping") == 0) {
             run_ping_test(address, duration);
         } else if (strcmp(test, "jitter") == 0) {
-            run_jitter_test(address, port, size, duration);
+            run_jitter_test(address, port, size, num_packets);
         } else {
             fprintf(stderr, "Invalid test type: %s\n", test);
             print_usage();
