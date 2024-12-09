@@ -48,7 +48,6 @@ void run_upload_test(char *address, int port, int size, int duration) {
     int client_sock;
     struct sockaddr_in server_addr;
     char *data = malloc(size);
-    char ack[32];
     memset(data, 'A', size);
     struct timeval start, end;
 
@@ -71,32 +70,49 @@ void run_upload_test(char *address, int port, int size, int duration) {
     }
 
     // Step 1: Send the test type
-    send(client_sock, "upload", strlen("upload"), 0);
+    if (send(client_sock, "upload", strlen("upload"), 0) < 0) {
+        perror("Failed to send test type");
+        free(data);
+        close(client_sock);
+        exit(EXIT_FAILURE);
+    }
 
     // Step 2: Wait for acknowledgment
+    char ack[32];
     int ack_received = recv(client_sock, ack, sizeof(ack) - 1, 0);
     if (ack_received <= 0 || strncmp(ack, "ACK", 3) != 0) {
-        perror("Server did not acknowledge test type");
+        fprintf(stderr, "Server did not acknowledge test type\n");
         free(data);
         close(client_sock);
         return;
     }
 
-    // Step 3: Start the upload test
+    // Step 3: Run the timed upload test
     gettimeofday(&start, NULL);
     long bytes_sent = 0;
-    for (int i = 0; i < duration; i++) {
+
+    while (1) {
+        gettimeofday(&end, NULL);
+        long elapsed = (end.tv_sec - start.tv_sec) * 1000000L + (end.tv_usec - start.tv_usec);
+        double elapsed_sec = elapsed / 1000000.0;
+
+        if (elapsed_sec >= duration) {
+            break;
+        }
+
         if (send(client_sock, data, size, 0) < 0) {
             perror("Data send failed");
             break;
         }
+
         bytes_sent += size;
     }
-    gettimeofday(&end, NULL);
 
-    long time_diff = calculate_time_diff(start, end);
-    printf("Upload Test: Sent %ld bytes in %ld microseconds (~%.2f Mbps)\n",
-           bytes_sent, time_diff, (bytes_sent * 8.0) / time_diff / 1e6);
+    long time_diff = (end.tv_sec - start.tv_sec) * 1000000L + (end.tv_usec - start.tv_usec);
+    double mbps = (bytes_sent * 8.0) / time_diff / 1e6;
+
+    printf("{\"status\":\"success\", \"test_type\":\"upload\", \"bytes_sent\":%ld, \"time_microseconds\":%ld, \"mbps\":%.2f}\n",
+           bytes_sent, time_diff, mbps);
 
     free(data);
     close(client_sock);

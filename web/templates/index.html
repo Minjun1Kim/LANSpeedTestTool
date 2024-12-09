@@ -29,8 +29,10 @@
         <input type="number" id="duration" name="duration" value="10"><br><br>
 
         <!-- NEW: num_packets input for jitter test -->
-        <label for="num_packets">Number of Packets (for jitter):</label>
-        <input type="number" id="num_packets" name="num_packets" value="10"><br><br>
+        <div id="num_packets_container">
+            <label for="num_packets">Number of Packets (for jitter):</label>
+            <input type="number" id="num_packets" name="num_packets" value="10">
+        </div><br><br>
 
         <button type="submit">Start Test</button>
     </form>

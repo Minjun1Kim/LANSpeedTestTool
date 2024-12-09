@@ -18,15 +18,16 @@ void handle_upload(int client_sock) {
     while (1) {
         int bytes = recv(client_sock, buffer, sizeof(buffer), 0);
         if (bytes <= 0) {
-            break; // End of data or error
+            break; // Client closed connection or error
         }
         total_bytes += bytes;
     }
     gettimeofday(&end, NULL);
 
     long time_diff = (end.tv_sec - start.tv_sec) * 1000000L + (end.tv_usec - start.tv_usec);
+    double mbps = (total_bytes * 8.0) / time_diff / 1e6;
     printf("Upload Test: Received %ld bytes in %ld microseconds (~%.2f Mbps)\n",
-           total_bytes, time_diff, (total_bytes * 8.0) / time_diff / 1e6);
+           total_bytes, time_diff, mbps);
 }
 
 void handle_download(int client_sock, int size, int duration) {
@@ -175,13 +176,12 @@ void start_server(int port) {
         // Step 2: Send acknowledgment to client
         send(client_sock, "ACK", 3, 0);
 
-        // If test is jitter, receive packet_size and num_packets from the client
+        // receive packet_size and num_packets from the client (for jitter)
         int packet_size, num_packets;
 
         if (strcmp(test_type, "upload") == 0) {
             handle_upload(client_sock);
         } else if (strcmp(test_type, "download") == 0) {
-            // Default values or you can modify to receive from client similarly
             handle_download(client_sock, 1024, 10);
         } else if (strcmp(test_type, "ping") == 0) {
             handle_ping(client_sock);

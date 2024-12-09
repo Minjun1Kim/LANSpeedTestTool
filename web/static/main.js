@@ -1,3 +1,22 @@
+const testTypeField = document.getElementById('test_type');
+const numPacketsContainer = document.getElementById('num_packets_container');
+
+function updateFieldVisibility() {
+    const testType = testTypeField.value;
+    if (testType === 'jitter') {
+        numPacketsContainer.style.display = 'block';
+    } else {
+        numPacketsContainer.style.display = 'none';
+    }
+}
+
+// Initial call to set visibility based on default selection
+updateFieldVisibility();
+
+// Listen for changes in test type
+testTypeField.addEventListener('change', updateFieldVisibility);
+
+
 const form = document.getElementById('testForm');
     let chart; 
 
