@@ -15,6 +15,10 @@ This tool simulates a simple LAN speed test similar to `iperf`. It measures uplo
     ```bash
     make
     ```
+3. **Install Mininet** (for testing):
+    - **Using a VM**:
+        - Install the Mininet VM from [Mininet Official Website](http://mininet.org/download/).
+
 
 ## Usage
 Run the program with the following options:
@@ -31,6 +35,80 @@ Options:
   -d, --duration   Test duration in seconds (default: 10)
   -h, --help       Display this help message
 ```
+
+## Running Tests in Mininet
+Use the provided `custom_topo.py` to create a custom Mininet topology. <br/>
+This script sets up a topology with multiple hosts connected to a single switch, allowing you to run concurrent tests. <br/>
+
+1. Run the Custom Topology
+
+In your terminal, execute the custom topology script with sudo:
+
+```shell
+sudo python3 custom_topo.py
+```
+
+2. Start the Server on h1
+Within the Mininet CLI:
+
+```shell
+mininet> h1 ./lan_speed -m server -p 8080 &
+```
+
+This command starts the server in the background on host h1, listening on port 8080.
+
+
+3. Run Concurrent Client Tests on h2, h3, etc.
+Execute various tests on client hosts. Below are examples of different test scenarios, including concurrent and mixed tests.
+
+- Ping and Upload Concurrently
+```shell
+mininet> h2 ./lan_speed -m client -t ping -a 10.0.0.1 -p 8080 -s 64 -d 10 -r udp > h2_ping.log &
+mininet> h3 ./lan_speed -m client -t upload -a 10.0.0.1 -p 8080 -s 1024 -d 10
+```
+
+- Two Ping Tests Concurrently
+```shell
+mininet> h2 ./lan_speed -m client -t ping -a 10.0.0.1 -p 8080 -s 64 -d 10 -r udp > h2_ping1.log &
+mininet> h3 ./lan_speed -m client -t ping -a 10.0.0.1 -p 8080 -s 64 -d 10 -r udp
+```
+
+- Ping and Download Concurrently
+```shell
+mininet> h2 ./lan_speed -m client -t ping -a 10.0.0.1 -p 8080 -s 128 -d 10 -r udp > h2_ping_concurrent.log &
+mininet> h3 ./lan_speed -m client -t download -a 10.0.0.1 -p 8080 -s 1024 -d 10
+```
+
+- Multiple Uploads Concurrently
+```shell
+mininet> h2 ./lan_speed -m client -t upload -a 10.0.0.1 -p 8080 -s 1024 -d 10 > h2_upload1.log &
+mininet> h3 ./lan_speed -m client -t upload -a 10.0.0.1 -p 8080 -s 1024 -d 10
+```
+
+- Repeated Download Tests
+```shell
+mininet> h2 ./lan_speed -m client -t download -a 10.0.0.1 -p 8080 -s 1024 -d 10 > h2_download1.log
+mininet> h3 ./lan_speed -m client -t download -a 10.0.0.1 -p 8080 -s 1024 -d 10
+```
+
+- Large Data Transfer (Long Duration):
+```shell
+mininet> h2 ./lan_speed -m client -t upload -a 10.0.0.1 -p 8080 -s 1024 -d 60
+```
+
+- Small Packet Ping Test on h2:
+```shell
+mininet> h2 ./lan_speed -m client -t ping -a 10.0.0.1 -p 8080 -s 32 -d 10 -r udp
+```
+
+4. View Test Results
+After tests complete, retrieve and view log files:
+```shell
+mininet> h2 cat h2_ping.log
+mininet> h3 cat h3_upload_tcp.log
+```
+
+
 
 ## Example
 1. Start the server on the desired port:
@@ -58,29 +136,14 @@ Options:
     ```
     In this example, the jitter test uses a packet size of 1024 bytes and sends 50 packets.
 
-## How it works:
-
-1. Server:
-
-    Listens on the specified TCP port. <br/>
-    Waits for incoming client connections. <br/>
-    Receives test type and parameters from the client. <br/>
-    Executes the requested test and returns results. <br/>
-
-2. Client:
-
-    Connects to the server and specifies the test type and parameters. <br/>
-    Sends/receives data as per the test requirements. <br/>
-    Executes the specified test and reports results like throughput, RTT, or jitter. <br/>
-
-3. Metrics:
-
-    Throughput: Calculated in Mbps (bits per second). <br/>
-    RTT: Round-trip time for ping is reported in microseconds. <br/>
-    Jitter: Average variation in RTT between consecutive packets. <br/>
-
-## Running the Web Interface
+## Running the Web Interface (on branch: web)
 A simple Flask-based web UI is provided in the /web directory: <br/>
+0. Switch to web branch
+``` shell
+git fetch origin
+git checkout -b web origin/web
+```
+
 1. Navigate to the /web directory:
 
 ```shell
@@ -115,8 +178,16 @@ Note: use 127:0.0.1 as the server address in the web form. <br/>
     UDP: Used for the ping test to simulate ICMP behavior. <br/> 
 2. Port Usage <br/>
     Default port is 8080 for TCP tests. <br/>
-    For UDP-based ping, port 12345 is used by default. <br/>
+    UDP-based Ping: Port 8080 is also used for UDP-based ping tests after dynamic port allocation for each UDP client.  <br/>
 
+3. Concurrent UDP Handling <br/>
+    Each UDP client is assigned a unique ephemeral port to handle concurrent UDP tests without packet interleaving. <br/>
+    The server dynamically allocates ports and communicates them to clients to ensure isolated communication channels. <br/>
+
+4. Mininet Integration <br/>
+    The tool is designed to work within Mininet environments, allowing multiple virtual hosts to perform various tests concurrently. <br/>
+    Ensure that Mininet hosts have network connectivity and appropriate routing to communicate with the server host. <br/>
+    Use the provided custom_topo.py to create a custom topology that facilitates concurrent testing. <br/>
 
 ## License
 This project is licensed under the MIT License.
