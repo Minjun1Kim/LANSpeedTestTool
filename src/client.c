@@ -353,7 +353,7 @@ void run_ping_test(char *address, int port, int size, int duration, int interval
     }
     jitter /= (duration - packets_lost - 1);
     printf("Jitter: %.4f\n", jitter);
-    printf("Packet Loss: %.2f%%\n", g(packets_lost/(float)duration)*100);
+    printf("Packet Loss: %.2f%%\n", (packets_lost/(float)duration)*100);
 
     close(sock);
 }

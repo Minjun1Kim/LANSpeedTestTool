@@ -178,7 +178,7 @@ void handle_ping(client_data_t* data) {
 
 static void *handle_tcp_client(void* arg) {
     int client_sock = *((int*)arg);
-    free(arg); // free the allocated memory for client_sock
+    free(arg);
     printf("TCP Client connected\n");
 
     char test_type[32]; 
@@ -206,25 +206,31 @@ static void *handle_tcp_client(void* arg) {
 }
 
 static void *handle_udp_client(void* arg) {
-    client_data_t* client_data = ((client_data_t*)arg);
+    client_data_t* client_data = (client_data_t*)arg;
 
     printf("Client connected\n");
 
-    if (sendto(client_data->sockfd, "ack", 4, 0, (struct sockaddr*)&client_data->client_addr, sizeof(client_data->client_addr)) < 0) {
+    if (sendto(client_data->sockfd, "ack", 4, 0, 
+               (struct sockaddr*)&client_data->client_addr, client_data->addr_len) < 0) {
         perror("Send Ack failed");
-        return;
+        free(client_data);
+        return NULL;
     }
 
-    if (strcmp(client_data->test, "upload")) {
+    if (strcmp(client_data->test, "upload") == 0) {
         handle_udp_upload(client_data);
-    } else if (strcmp(client_data->test, "download")) {
+    } else if (strcmp(client_data->test, "download") == 0) {
         handle_udp_download(client_data);
-    } else if (strcmp(client_data->test, "ping")) {
+    } else if (strcmp(client_data->test, "ping") == 0) {
         handle_ping(client_data);
     } else {
         printf("Unknown test type: %s\n", client_data->test);
     }
+
+    free(client_data);
+    return NULL; 
 }
+
 
 static void *start_tcp_thread(void* arg) {
     int server_sock = *((int*)arg);
