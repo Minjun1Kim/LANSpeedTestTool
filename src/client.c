@@ -295,7 +295,7 @@ void run_ping_test(char *address, int port, int size, int duration, int interval
         exit(EXIT_FAILURE);
     }
     
-    if (sendto(sock, buffer, strlen(buffer), size, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+    if (sendto(sock, buffer, strlen(buffer), 0, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
         perror("Send Ping test type failed");
         return;
     }
