@@ -326,7 +326,7 @@ void run_ping_test(char *address, int port, int size, int duration, int interval
         clock_gettime(CLOCK_MONOTONIC, &start_time);
         
         // Send a ping message to the server
-        if (sendto(sock, data, strlen(data), 0, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        if (sendto(sock, data, size, 0, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
             packets_lost++;
             perror("Ping send failed");
             continue;

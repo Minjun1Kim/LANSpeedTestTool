@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <time.h>
 
 typedef struct {
     int sockfd;
@@ -9,5 +10,6 @@ typedef struct {
 
 struct packet {
     struct timespec timestamp;  // Timestamp of when packet was sent
+    size_t length;
     char data[];                // Flexible array member for variable-size data
 };

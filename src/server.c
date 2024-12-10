@@ -29,17 +29,6 @@ int create_socket(int type, int port) {
         exit(EXIT_FAILURE);
     }
 
-    struct timeval timeout;
-    timeout.tv_sec = 2;  // Set timeout for 2 seconds
-    timeout.tv_usec = 0;
-
-    // Set socket timeout using setsockopt
-    if (setsockopt(server_sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
-        perror("setsockopt failed");
-        close(server_sock);
-        exit(EXIT_FAILURE);
-    }
-
     return server_sock;
 }
 
