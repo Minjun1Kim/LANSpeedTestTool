@@ -22,6 +22,7 @@ static int create_tcp_socket(char *address, int port) {
         exit(EXIT_FAILURE);
     }
 
+    memset(&server_addr,0,sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
     if (inet_pton(AF_INET, address, &server_addr.sin_addr) <= 0) {
@@ -40,7 +41,6 @@ static int create_tcp_socket(char *address, int port) {
     timeout.tv_sec = 2;  // Set timeout for 2 seconds
     timeout.tv_usec = 0;
 
-    // Set socket timeout using setsockopt
     if (setsockopt(client_sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
         perror("setsockopt failed");
         close(client_sock);
@@ -50,40 +50,60 @@ static int create_tcp_socket(char *address, int port) {
     return client_sock;
 }
 
-static int create_udp_socket(char *address, int port, struct sockaddr_in *server_addr) {
+static int create_udp_socket_and_send_test(char *address, int port, const char *test) {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
         perror("UDP Socket creation failed");
         exit(EXIT_FAILURE);
     }
 
-    memset(server_addr, 0, sizeof(*server_addr));
-    server_addr->sin_family = AF_INET;
-    server_addr->sin_port = htons(port);
-    if (inet_pton(AF_INET, address, &server_addr->sin_addr) <= 0) {
+    struct sockaddr_in server_addr;
+    memset(&server_addr,0,sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+    if (inet_pton(AF_INET, address, &server_addr.sin_addr) <= 0) {
         perror("Invalid server IP address");
         close(sock);
         exit(EXIT_FAILURE);
     }
+
+    // Send test type
+    if (sendto(sock, test, strlen(test), 0, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Failed to send test type");
+        close(sock);
+        return -1;
+    }
+
+    // Receive new_port from server
+    unsigned short new_port;
+    socklen_t addr_len = sizeof(server_addr);
+    if (recvfrom(sock, &new_port, sizeof(new_port), 0, (struct sockaddr*)&server_addr, &addr_len) <= 0) {
+        perror("Failed to receive new port");
+        close(sock);
+        return -1;
+    }
+
+    // Now close and reopen socket bound to new_port?
+    // Actually we don't need to reopen, just update server_addr to the new port:
+    server_addr.sin_port = htons(new_port);
+
+    // Connect the socket to fix the remote address and avoid specifying it every time
+    if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        perror("UDP connect failed");
+        close(sock);
+        return -1;
+    }
+
     return sock;
 }
 
-
 void run_udp_upload_test(char *address, int port, int duration) {
-    struct sockaddr_in server_addr;
-    int sock = create_udp_socket(address, port, &server_addr);
-
-    // Send test type
-    if (sendto(sock, "upload", 6, 0, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        perror("Failed to send test type");
-        close(sock);
-        return;
-    }
+    int sock = create_udp_socket_and_send_test(address, port, "upload");
+    if (sock < 0) return;
 
     // Wait for ack
     char ack[4];
-    socklen_t addr_len = sizeof(server_addr);
-    if (recvfrom(sock, ack, sizeof(ack)-1, 0, (struct sockaddr*)&server_addr, &addr_len) <= 0) {
+    if (recv(sock, ack, sizeof(ack), 0) <= 0) {
         perror("Failed to receive ack");
         close(sock);
         return;
@@ -103,7 +123,7 @@ void run_udp_upload_test(char *address, int port, int duration) {
             break;
         }
 
-        if (sendto(sock, data, DATA_SIZE, 0, (struct sockaddr*)&server_addr, addr_len) < 0) {
+        if (send(sock, data, DATA_SIZE, 0) < 0) {
             perror("UDP data send failed");
             break;
         }
@@ -117,20 +137,12 @@ void run_udp_upload_test(char *address, int port, int duration) {
 }
 
 void run_udp_download_test(char *address, int port, int duration) {
-    struct sockaddr_in server_addr;
-    int sock = create_udp_socket(address, port, &server_addr);
-
-    // Send test type
-    if (sendto(sock, "download", 8, 0, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        perror("Failed to send test type");
-        close(sock);
-        return;
-    }
+    int sock = create_udp_socket_and_send_test(address, port, "download");
+    if (sock < 0) return;
 
     // Wait for ack
     char ack[4];
-    socklen_t addr_len = sizeof(server_addr);
-    if (recvfrom(sock, ack, sizeof(ack)-1, 0, (struct sockaddr*)&server_addr, &addr_len) <= 0) {
+    if (recv(sock, ack, sizeof(ack), 0) <= 0) {
         perror("Failed to receive ack");
         close(sock);
         return;
@@ -149,7 +161,7 @@ void run_udp_download_test(char *address, int port, int duration) {
             break;
         }
 
-        int bytes = recvfrom(sock, buffer, DATA_SIZE, 0, (struct sockaddr*)&server_addr, &addr_len);
+        int bytes = recv(sock, buffer, DATA_SIZE, 0);
         if (bytes > 0) {
             bytes_received += bytes;
         } else if (bytes < 0) {
@@ -174,8 +186,6 @@ void run_udp_download_test(char *address, int port, int duration) {
 
 void run_tcp_upload_test(char *address, int port, int duration) {
     int client_sock = create_tcp_socket(address, port);
-
-    // Step 1: Send the test type
     send(client_sock, "upload", strlen("upload"), 0);
 
     char *data = malloc(DATA_SIZE);
@@ -186,16 +196,15 @@ void run_tcp_upload_test(char *address, int port, int duration) {
         clock_gettime(CLOCK_MONOTONIC, &start_time);
         long bytes_sent_i = send(client_sock, data, DATA_SIZE, 0);
         if (bytes_sent_i < 0) {
-                perror("Data send failed");
-                break;
-            }
+            perror("Data send failed");
+            break;
+        }
         clock_gettime(CLOCK_MONOTONIC, &end_time);
         double time_taken = (end_time.tv_sec - start_time.tv_sec) +
                             (end_time.tv_nsec - start_time.tv_nsec) / 1e9;
         total_elapsed_time += time_taken;
     }
 
-    // Step 3: Start the upload test
     total_elapsed_time = 0;
     long bytes_sent = 0;
     int iteration = 1;
@@ -203,9 +212,9 @@ void run_tcp_upload_test(char *address, int port, int duration) {
         clock_gettime(CLOCK_MONOTONIC, &start_time);
         long bytes_sent_i = send(client_sock, data, DATA_SIZE, 0);
         if (bytes_sent_i < 0) {
-                perror("Data send failed");
-                break;
-            }
+            perror("Data send failed");
+            break;
+        }
         clock_gettime(CLOCK_MONOTONIC, &end_time);
         bytes_sent += bytes_sent_i;
         double time_taken = (end_time.tv_sec - start_time.tv_sec) +
@@ -225,10 +234,8 @@ void run_tcp_upload_test(char *address, int port, int duration) {
     close(client_sock);
 }
 
-
 void run_tcp_download_test(char *address, int port, int duration) {
     int client_sock = create_tcp_socket(address, port);
-
     send(client_sock, "download", strlen("download"), 0);
 
     char *data = malloc(DATA_SIZE);
@@ -240,9 +247,9 @@ void run_tcp_download_test(char *address, int port, int duration) {
         clock_gettime(CLOCK_MONOTONIC, &start_time);
         long bytes_recieved_i = recv(client_sock, data, DATA_SIZE, 0);
         if (bytes_recieved_i < 0) {
-                perror("Data recieve failed");
-                break;
-            }
+            perror("Data recieve failed");
+            break;
+        }
         clock_gettime(CLOCK_MONOTONIC, &end_time);
         bytes_recieved += bytes_recieved_i;
         double time_taken = (end_time.tv_sec - start_time.tv_sec) +
@@ -262,96 +269,64 @@ void run_tcp_download_test(char *address, int port, int duration) {
 }
 
 void run_ping_test(char *address, int port, int size, int duration, int interval) {
-    struct timespec start_time, end_time;
-    float packets_lost = 0.0;
-    double rtts[duration];
-    char *buffer = "ping";
+    int sock = create_udp_socket_and_send_test(address, port, "ping");
+    if (sock < 0) return;
 
-    int sock;
-    struct sockaddr_in server_addr;
-
-    sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0) {
-        perror("Socket creation failed");
-        exit(EXIT_FAILURE);
-    }
-
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    if (inet_pton(AF_INET, address, &server_addr.sin_addr) <= 0) {
-        perror("Invalid server IP address");
-        close(sock);
-        exit(EXIT_FAILURE);
-    }
-
-    struct timeval timeout;
-    timeout.tv_sec = 2;  // Set timeout for 2 seconds
-    timeout.tv_usec = 0;
-
-    // Set socket timeout using setsockopt
-    if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
-        perror("setsockopt failed");
-        close(sock);
-        exit(EXIT_FAILURE);
-    }
-    
-    if (sendto(sock, buffer, strlen(buffer), 0, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        perror("Send Ping test type failed");
-        return;
-    }
-
+    // Wait for ack (not yet, first we must send size after ack)
+    // Actually we first receive ack from handle_udp_client once connected:
     char ack[4];
-    socklen_t addr_len = sizeof(server_addr);
-    int len = recvfrom(sock, ack, 4, 0, (struct sockaddr *)&server_addr, &addr_len);
-    if (len < 0) {
-        perror("Receive failed1");
+    if (recv(sock, ack, sizeof(ack), 0) <= 0) {
+        perror("Failed to receive ack");
+        close(sock);
         return;
     }
 
-    if (strcmp(ack, "ack") != 0) {
-        perror("Receive ack failed");
-        return;
-    }
-
-    if (sendto(sock, &size, sizeof(size), 0, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+    // Now send the packet size
+    if (send(sock, &size, sizeof(size), 0) < 0) {
         perror("Send packet size failed");
+        close(sock);
         return;
     }
 
     char data[size];
     memset(data, 'A', size);
 
+    struct timespec start_time, end_time;
+    float packets_lost = 0.0;
+    double rtts[duration];
+
     for (int i = 0; i < duration; i++) {
         sleep(interval);
         clock_gettime(CLOCK_MONOTONIC, &start_time);
-        
-        // Send a ping message to the server
-        if (sendto(sock, data, size, 0, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+
+        if (send(sock, data, size, 0) < 0) {
             packets_lost++;
             perror("Ping send failed");
             continue;
         }
 
-        // Receive the ping reply from the server
-        if (recvfrom(sock, data, size, 0, (struct sockaddr*)&server_addr, &addr_len) < 0) {
+        if (recv(sock, data, size, 0) < 0) {
             packets_lost++;
             perror("Ping receive failed");
             continue;
         }
+
         clock_gettime(CLOCK_MONOTONIC, &end_time);
-        
         double rtt = (end_time.tv_sec - start_time.tv_sec) +
-                            (end_time.tv_nsec - start_time.tv_nsec) / 1e9;
+                     (end_time.tv_nsec - start_time.tv_nsec)/1e9;
         rtt *= 1000;
         rtts[i] = rtt;
         printf("Ping %d: RTT = %.4f ms\n", i + 1, rtt);
     }
 
     double jitter = 0;
-    for (int i = 1; i < duration; i++) {   
-        jitter += fabs(rtts[i] - rtts[i-1]);
+    int valid_count = duration - (int)packets_lost;
+    if (valid_count > 1) {
+        for (int i = 1; i < duration; i++) {
+            jitter += fabs(rtts[i] - rtts[i-1]);
+        }
+        jitter /= (valid_count - 1);
     }
-    jitter /= (duration - packets_lost - 1);
     printf("Jitter: %.4f\n", jitter);
     printf("Packet Loss: %.2f%%\n", (packets_lost/(float)duration)*100);
 

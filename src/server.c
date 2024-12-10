@@ -5,7 +5,8 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include <pthread.h>
-#include <stdio.h>
+#include <arpa/inet.h>
+#include <errno.h>
 
 #define BUFFER_SIZE 32768
 
@@ -19,6 +20,7 @@ int create_socket(int type, int port) {
         exit(EXIT_FAILURE);
     }
 
+    memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
     server_addr.sin_addr.s_addr = INADDR_ANY;
@@ -62,7 +64,6 @@ void handle_tcp_download(int client_sock) {
     memset(data, 'A', BUFFER_SIZE);
 
     struct timeval start, end;
-    
     gettimeofday(&start, NULL);
     while (1) {
         if (send(client_sock, data, BUFFER_SIZE, 0) < 0) {
@@ -73,13 +74,12 @@ void handle_tcp_download(int client_sock) {
     gettimeofday(&end, NULL);
 
     long time_diff = (end.tv_sec - start.tv_sec) * 1000000L + (end.tv_usec - start.tv_usec);
-    printf("Download Test: Sent %ld bytes for %ld seconds\n", BUFFER_SIZE * time_diff, time_diff);
+    printf("Download Test: Sent %ld bytes for %ld seconds\n", (long)BUFFER_SIZE * time_diff, time_diff);
 
     free(data);
 }
 
 void handle_udp_upload(client_data_t* data) {
-    // Client sends data for some duration; we receive it and measure.
     char buffer[BUFFER_SIZE];
     long total_bytes = 0;
     struct timeval start, end;
@@ -89,7 +89,7 @@ void handle_udp_upload(client_data_t* data) {
         int bytes = recvfrom(data->sockfd, buffer, sizeof(buffer), 0,
                              (struct sockaddr *)&data->client_addr, &data->addr_len);
         if (bytes <= 0) {
-            // Possibly timeout or client done
+            // possibly timeout or client done
             break;
         }
         total_bytes += bytes;
@@ -107,13 +107,9 @@ void handle_udp_upload(client_data_t* data) {
 }
 
 void handle_udp_download(client_data_t* data) {
-    // For UDP download: we continuously send data until client stops or duration passes.
-    // Client can measure how much it got.
     char *packet = malloc(BUFFER_SIZE);
     memset(packet, 'A', BUFFER_SIZE);
 
-    // Just send data for a while; assume client times out after duration
-    // In a more robust design, you'd signal when to stop.
     struct timeval start, now;
     gettimeofday(&start, NULL);
     while (1) {
@@ -124,8 +120,7 @@ void handle_udp_download(client_data_t* data) {
         }
         gettimeofday(&now, NULL);
         long elapsed = (now.tv_sec - start.tv_sec)*1000000L+(now.tv_usec - start.tv_usec);
-        // For demonstration, send data for ~5 seconds only:
-        if (elapsed > 5000000L) {
+        if (elapsed > 5000000L) { // 5 seconds
             break;
         }
     }
@@ -165,6 +160,32 @@ void handle_ping(client_data_t* data) {
     free(data);
 }
 
+static void *handle_udp_client(void* arg) {
+    client_data_t* client_data = (client_data_t*)arg;
+    printf("Client connected (UDP dedicated socket)\n");
+
+    // Now we can safely send ack from this dedicated socket
+    if (sendto(client_data->sockfd, "ack", 4, 0, 
+               (struct sockaddr*)&client_data->client_addr, client_data->addr_len) < 0) {
+        perror("Send Ack failed");
+        free(client_data);
+        return NULL;
+    }
+
+    if (strcmp(client_data->test, "upload") == 0) {
+        handle_udp_upload(client_data);
+    } else if (strcmp(client_data->test, "download") == 0) {
+        handle_udp_download(client_data);
+    } else if (strcmp(client_data->test, "ping") == 0) {
+        handle_ping(client_data);
+    } else {
+        printf("Unknown test type: %s\n", client_data->test);
+        free(client_data);
+    }
+
+    return NULL; 
+}
+
 static void *handle_tcp_client(void* arg) {
     int client_sock = *((int*)arg);
     free(arg);
@@ -193,33 +214,6 @@ static void *handle_tcp_client(void* arg) {
     printf("TCP Client disconnected\n");
     return NULL;
 }
-
-static void *handle_udp_client(void* arg) {
-    client_data_t* client_data = (client_data_t*)arg;
-
-    printf("Client connected\n");
-
-    if (sendto(client_data->sockfd, "ack", 4, 0, 
-               (struct sockaddr*)&client_data->client_addr, client_data->addr_len) < 0) {
-        perror("Send Ack failed");
-        free(client_data);
-        return NULL;
-    }
-
-    if (strcmp(client_data->test, "upload") == 0) {
-        handle_udp_upload(client_data);
-    } else if (strcmp(client_data->test, "download") == 0) {
-        handle_udp_download(client_data);
-    } else if (strcmp(client_data->test, "ping") == 0) {
-        handle_ping(client_data);
-    } else {
-        printf("Unknown test type: %s\n", client_data->test);
-    }
-
-    free(client_data);
-    return NULL; 
-}
-
 
 static void *start_tcp_thread(void* arg) {
     int server_sock = *((int*)arg);
@@ -259,7 +253,7 @@ static void *start_udp_thread(void* arg) {
             continue;
         }
 
-        client_data->sockfd = server_sock;
+        client_data->sockfd = server_sock; // temporarily
         client_data->addr_len = sizeof(client_data->client_addr);
 
         memset(client_data->test, 0, sizeof(client_data->test));
@@ -274,9 +268,53 @@ static void *start_udp_thread(void* arg) {
         client_data->test[len] = '\0';
         printf("UDP request: %s\n", client_data->test);
 
+        // Create a new socket for this client
+        int client_sock = socket(AF_INET, SOCK_DGRAM, 0);
+        if (client_sock < 0) {
+            perror("Failed to create client-specific UDP socket");
+            free(client_data);
+            continue;
+        }
+
+        struct sockaddr_in temp_addr;
+        memset(&temp_addr, 0, sizeof(temp_addr));
+        temp_addr.sin_family = AF_INET;
+        temp_addr.sin_port = 0; // ephemeral port
+        temp_addr.sin_addr.s_addr = INADDR_ANY;
+
+        if (bind(client_sock, (struct sockaddr*)&temp_addr, sizeof(temp_addr)) < 0) {
+            perror("Bind failed for client-specific socket");
+            close(client_sock);
+            free(client_data);
+            continue;
+        }
+
+        socklen_t temp_len = sizeof(temp_addr);
+        if (getsockname(client_sock, (struct sockaddr*)&temp_addr, &temp_len) < 0) {
+            perror("getsockname failed");
+            close(client_sock);
+            free(client_data);
+            continue;
+        }
+
+        unsigned short new_port = ntohs(temp_addr.sin_port);
+
+        // Send the new port number to the client so it knows where to send subsequent packets
+        if (sendto(server_sock, &new_port, sizeof(new_port), 0,
+                   (struct sockaddr*)&client_data->client_addr, client_data->addr_len) < 0) {
+            perror("Failed to send new port");
+            close(client_sock);
+            free(client_data);
+            continue;
+        }
+
+        // Update client_data to use this new socket
+        client_data->sockfd = client_sock;
+
         pthread_t thread_id;
         if (pthread_create(&thread_id, NULL, &handle_udp_client, client_data) != 0) {
             perror("Thread creation failed");
+            close(client_sock);
             free(client_data);
             continue;
         }
