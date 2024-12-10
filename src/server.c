@@ -58,9 +58,14 @@ void handle_tcp_upload(int client_sock) {
     }
     gettimeofday(&end, NULL);
 
-    long time_diff = (end.tv_sec - start.tv_sec) * 1000000L + (end.tv_usec - start.tv_usec);
-    printf("Upload Test: Received %ld bytes in %ld microseconds (~%.2f Mbps)\n",
-           total_bytes, time_diff, (total_bytes * 8.0) / time_diff / 1e6);
+    long time_diff = (end.tv_sec - start.tv_sec)*1000000L+(end.tv_usec - start.tv_usec);
+    double mbps = 0.0;
+    if (time_diff > 0) {
+        mbps = (total_bytes * 8.0) / time_diff;
+    }
+
+    printf("TCP Upload Test: Received %ld bytes in %ld microseconds (~%.2f Mbps)\n",
+           total_bytes, time_diff, mbps);
 }
 
 void handle_tcp_download(int client_sock) {
@@ -85,67 +90,119 @@ void handle_tcp_download(int client_sock) {
 }
 
 void handle_udp_upload(client_data_t* data) {
+    // Client sends data for some duration; we receive it and measure.
+    char buffer[BUFFER_SIZE];
+    long total_bytes = 0;
+    struct timeval start, end;
+    gettimeofday(&start, NULL);
 
+    while (1) {
+        int bytes = recvfrom(data->sockfd, buffer, sizeof(buffer), 0,
+                             (struct sockaddr *)&data->client_addr, &data->addr_len);
+        if (bytes <= 0) {
+            // Possibly timeout or client done
+            break;
+        }
+        total_bytes += bytes;
+    }
+
+    gettimeofday(&end, NULL);
+    long time_diff = (end.tv_sec - start.tv_sec)*1000000L+(end.tv_usec - start.tv_usec);
+    double mbps = 0.0;
+    if (time_diff > 0) {
+        mbps = (total_bytes * 8.0) / time_diff;
+    }
+    printf("UDP Upload Test: Received %ld bytes in %ld microseconds (~%.2f Mbps)\n",
+           total_bytes, time_diff, mbps);
+    free(data);
 }
-void handle_udp_download(client_data_t* data) {
 
+void handle_udp_download(client_data_t* data) {
+    // For UDP download: we continuously send data until client stops or duration passes.
+    // Client can measure how much it got.
+    char *packet = malloc(BUFFER_SIZE);
+    memset(packet, 'A', BUFFER_SIZE);
+
+    // Just send data for a while; assume client times out after duration
+    // In a more robust design, you'd signal when to stop.
+    struct timeval start, now;
+    gettimeofday(&start, NULL);
+    while (1) {
+        if (sendto(data->sockfd, packet, BUFFER_SIZE, 0,
+                   (struct sockaddr*)&data->client_addr, data->addr_len) < 0) {
+            perror("UDP send failed");
+            break;
+        }
+        gettimeofday(&now, NULL);
+        long elapsed = (now.tv_sec - start.tv_sec)*1000000L+(now.tv_usec - start.tv_usec);
+        // For demonstration, send data for ~5 seconds only:
+        if (elapsed > 5000000L) {
+            break;
+        }
+    }
+
+    printf("UDP Download Test completed sending.\n");
+    free(packet);
+    free(data);
 }
 
 void handle_ping(client_data_t* data) {
     int packet_size;
-    int len = recvfrom(data->sockfd, &packet_size, sizeof(packet_size), 0, 
-                           (struct sockaddr *)&data->client_addr, &data->addr_len);
+    int len = recvfrom(data->sockfd, &packet_size, sizeof(packet_size), 0,
+                       (struct sockaddr *)&data->client_addr, &data->addr_len);
     if (len < 0) {
-        perror("Receive failed1");
+        perror("Receive failed");
+        free(data);
         return;
     }
 
     char buffer[packet_size];
     while (1) {
         memset(buffer, 0, packet_size);
-        len = recvfrom(data->sockfd, buffer, packet_size, 0, 
-                           (struct sockaddr *)&data->client_addr, &data->addr_len);
-        if (len < 0) {
-            perror("Receive failed2");
+        len = recvfrom(data->sockfd, buffer, packet_size, 0,
+                       (struct sockaddr *)&data->client_addr, &data->addr_len);
+        if (len <= 0) {
             break;
         }
 
-        printf("Received packet from client\n");
-        if (sendto(data->sockfd, buffer, len, 0, 
+        if (sendto(data->sockfd, buffer, len, 0,
                    (struct sockaddr *)&data->client_addr, data->addr_len) < 0) {
             perror("Send failed");
             break;
         }
     }
+
+    printf("Ping test ended.\n");
+    free(data);
 }
 
 static void *handle_tcp_client(void* arg) {
     int client_sock = *((int*)arg);
+    free(arg); // free the allocated memory for client_sock
+    printf("TCP Client connected\n");
 
-    printf("Client connected\n");
-
-    char test_type[10]; 
+    char test_type[32]; 
     memset(test_type, 0, sizeof(test_type));
-    int bytes_received = recv(client_sock, test_type, sizeof(test_type) - 1, 0); // Read only the test type
+    int bytes_received = recv(client_sock, test_type, sizeof(test_type) - 1, 0);
     if (bytes_received <= 0) {
         perror("Error reading test type");
         close(client_sock);
-        return;
+        return NULL;
     }
 
     test_type[bytes_received] = '\0';
 
-    // Step 3: Handle the requested test
     if (strcmp(test_type, "upload") == 0) {
         handle_tcp_upload(client_sock);
     } else if (strcmp(test_type, "download") == 0) {
         handle_tcp_download(client_sock);
     } else {
-        printf("Unknown test type: %s\n", test_type);
+        printf("Unknown TCP test type: %s\n", test_type);
     }
 
     close(client_sock);
-    printf("Client disconnected\n");
+    printf("TCP Client disconnected\n");
+    return NULL;
 }
 
 static void *handle_udp_client(void* arg) {
@@ -177,13 +234,24 @@ static void *start_tcp_thread(void* arg) {
     addr_size = sizeof(client_addr);
     while (1) {
         int client_sock = accept(server_sock, (struct sockaddr*)&client_addr, &addr_size);
-        pthread_t thread_id;
-        if (pthread_create(&thread_id, NULL, &handle_tcp_client, (void*)&client_sock) != 0) {
-            perror("Failed to create tcp client thread");
+        if (client_sock < 0) {
+            perror("Accept failed");
+            continue;
         }
+
+        int *csock_ptr = malloc(sizeof(int));
+        *csock_ptr = client_sock;
+        pthread_t thread_id;
+        if (pthread_create(&thread_id, NULL, &handle_tcp_client, (void*)csock_ptr) != 0) {
+            perror("Failed to create tcp client thread");
+            close(client_sock);
+            free(csock_ptr);
+        }
+        pthread_detach(thread_id);
     }
 
     close(server_sock);
+    return NULL;
 }
 
 static void *start_udp_thread(void* arg) {
@@ -199,15 +267,17 @@ static void *start_udp_thread(void* arg) {
         client_data->sockfd = server_sock;
         client_data->addr_len = sizeof(client_data->client_addr);
 
-        memset(client_data->test, 0, 10);
-        int len = recvfrom(server_sock, client_data->test, 10, 0, (struct sockaddr *)&client_data->client_addr, &client_data->addr_len);
+        memset(client_data->test, 0, sizeof(client_data->test));
+        int len = recvfrom(server_sock, client_data->test, sizeof(client_data->test)-1, 0,
+                           (struct sockaddr *)&client_data->client_addr, &client_data->addr_len);
         if (len < 0) {
-            perror("Receive failed3");
+            perror("Receive failed");
             free(client_data);
             continue;
         }
 
-        printf("Connection established with client.\n");
+        client_data->test[len] = '\0';
+        printf("UDP request: %s\n", client_data->test);
 
         pthread_t thread_id;
         if (pthread_create(&thread_id, NULL, &handle_udp_client, client_data) != 0) {
@@ -215,9 +285,11 @@ static void *start_udp_thread(void* arg) {
             free(client_data);
             continue;
         }
+        pthread_detach(thread_id);
     }
 
     close(server_sock);
+    return NULL;
 }
 
 void start_server(int port) {
@@ -236,10 +308,10 @@ void start_server(int port) {
     pthread_t tcp_thread;
     pthread_t udp_thread;
     if (pthread_create(&tcp_thread, NULL, start_tcp_thread, (void*)&tcp_sock) != 0) {
-        perror("Failed to create server thread");
+        perror("Failed to create tcp server thread");
     }
     if (pthread_create(&udp_thread, NULL, start_udp_thread, (void*)&udp_sock) != 0) {
-        perror("Failed to create server thread");
+        perror("Failed to create udp server thread");
     }
 
     pthread_join(tcp_thread, NULL);

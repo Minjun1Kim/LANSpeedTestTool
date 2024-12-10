@@ -50,8 +50,128 @@ static int create_tcp_socket(char *address, int port) {
     return client_sock;
 }
 
-void run_udp_upload_test(char *address, int port, int duration) {}
-void run_udp_download_test(char *address, int port, int duration) {}
+static int create_udp_socket(char *address, int port, struct sockaddr_in *server_addr) {
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        perror("UDP Socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    memset(server_addr, 0, sizeof(*server_addr));
+    server_addr->sin_family = AF_INET;
+    server_addr->sin_port = htons(port);
+    if (inet_pton(AF_INET, address, &server_addr->sin_addr) <= 0) {
+        perror("Invalid server IP address");
+        close(sock);
+        exit(EXIT_FAILURE);
+    }
+    return sock;
+}
+
+
+void run_udp_upload_test(char *address, int port, int duration) {
+    struct sockaddr_in server_addr;
+    int sock = create_udp_socket(address, port, &server_addr);
+
+    // Send test type
+    if (sendto(sock, "upload", 6, 0, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Failed to send test type");
+        close(sock);
+        return;
+    }
+
+    // Wait for ack
+    char ack[4];
+    socklen_t addr_len = sizeof(server_addr);
+    if (recvfrom(sock, ack, sizeof(ack)-1, 0, (struct sockaddr*)&server_addr, &addr_len) <= 0) {
+        perror("Failed to receive ack");
+        close(sock);
+        return;
+    }
+
+    char *data = malloc(DATA_SIZE);
+    memset(data, 'A', DATA_SIZE);
+
+    struct timeval start, now;
+    gettimeofday(&start, NULL);
+    long bytes_sent = 0;
+    while (1) {
+        gettimeofday(&now, NULL);
+        long elapsed = (now.tv_sec - start.tv_sec)*1000000L + (now.tv_usec - start.tv_usec);
+        double sec = elapsed / 1000000.0;
+        if (sec >= duration) {
+            break;
+        }
+
+        if (sendto(sock, data, DATA_SIZE, 0, (struct sockaddr*)&server_addr, addr_len) < 0) {
+            perror("UDP data send failed");
+            break;
+        }
+        bytes_sent += DATA_SIZE;
+    }
+
+    printf("UDP Upload Test: Sent %ld bytes in %d seconds\n", bytes_sent, duration);
+
+    free(data);
+    close(sock);
+}
+
+void run_udp_download_test(char *address, int port, int duration) {
+    struct sockaddr_in server_addr;
+    int sock = create_udp_socket(address, port, &server_addr);
+
+    // Send test type
+    if (sendto(sock, "download", 8, 0, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Failed to send test type");
+        close(sock);
+        return;
+    }
+
+    // Wait for ack
+    char ack[4];
+    socklen_t addr_len = sizeof(server_addr);
+    if (recvfrom(sock, ack, sizeof(ack)-1, 0, (struct sockaddr*)&server_addr, &addr_len) <= 0) {
+        perror("Failed to receive ack");
+        close(sock);
+        return;
+    }
+
+    char *buffer = malloc(DATA_SIZE);
+    struct timeval start, now;
+    gettimeofday(&start, NULL);
+    long bytes_received = 0;
+
+    while (1) {
+        gettimeofday(&now, NULL);
+        long elapsed = (now.tv_sec - start.tv_sec)*1000000L + (now.tv_usec - start.tv_usec);
+        double sec = elapsed / 1000000.0;
+        if (sec >= duration) {
+            break;
+        }
+
+        int bytes = recvfrom(sock, buffer, DATA_SIZE, 0, (struct sockaddr*)&server_addr, &addr_len);
+        if (bytes > 0) {
+            bytes_received += bytes;
+        } else if (bytes < 0) {
+            perror("UDP receive failed");
+            break;
+        }
+    }
+
+    double mbps = 0.0;
+    gettimeofday(&now, NULL);
+    long total_time = (now.tv_sec - start.tv_sec)*1000000L+(now.tv_usec - start.tv_usec);
+    if (total_time > 0) {
+        mbps = (bytes_received * 8.0) / total_time;
+    }
+
+    printf("UDP Download Test: Received %ld bytes in %d seconds (~%.2f Mbps)\n",
+           bytes_received, duration, mbps);
+
+    free(buffer);
+    close(sock);
+}
+
 void run_tcp_upload_test(char *address, int port, int duration) {
     int client_sock = create_tcp_socket(address, port);
 
