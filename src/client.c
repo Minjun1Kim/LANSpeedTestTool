@@ -9,8 +9,7 @@
 #include <time.h>
 #include <netinet/ip_icmp.h>
 #include <math.h>
-
-#define DATA_SIZE 32768
+#include <netdb.h>
 
 static int create_tcp_socket(char *address, int port) {
     int client_sock;
@@ -109,8 +108,8 @@ void run_udp_upload_test(char *address, int port, int duration) {
         return;
     }
 
-    char *data = malloc(DATA_SIZE);
-    memset(data, 'A', DATA_SIZE);
+    char *data = malloc(BUFFER_SIZE);
+    memset(data, 'A', BUFFER_SIZE);
 
     struct timeval start, now;
     gettimeofday(&start, NULL);
@@ -123,11 +122,11 @@ void run_udp_upload_test(char *address, int port, int duration) {
             break;
         }
 
-        if (send(sock, data, DATA_SIZE, 0) < 0) {
+        if (send(sock, data, BUFFER_SIZE, 0) < 0) {
             perror("UDP data send failed");
             break;
         }
-        bytes_sent += DATA_SIZE;
+        bytes_sent += BUFFER_SIZE;
     }
 
     printf("UDP Upload Test: Sent %ld bytes in %d seconds\n", bytes_sent, duration);
@@ -148,7 +147,7 @@ void run_udp_download_test(char *address, int port, int duration) {
         return;
     }
 
-    char *buffer = malloc(DATA_SIZE);
+    char *buffer = malloc(BUFFER_SIZE);
     struct timeval start, now;
     gettimeofday(&start, NULL);
     long bytes_received = 0;
@@ -161,7 +160,7 @@ void run_udp_download_test(char *address, int port, int duration) {
             break;
         }
 
-        int bytes = recv(sock, buffer, DATA_SIZE, 0);
+        int bytes = recv(sock, buffer, BUFFER_SIZE, 0);
         if (bytes > 0) {
             bytes_received += bytes;
         } else if (bytes < 0) {
@@ -188,13 +187,13 @@ void run_tcp_upload_test(char *address, int port, int duration) {
     int client_sock = create_tcp_socket(address, port);
     send(client_sock, "upload", strlen("upload"), 0);
 
-    char *data = malloc(DATA_SIZE);
-    memset(data, 'A', DATA_SIZE);
+    char *data = malloc(BUFFER_SIZE);
+    memset(data, 'A', BUFFER_SIZE);
     struct timespec start_time, end_time;
     double total_elapsed_time = 0;
     while (total_elapsed_time < 0.1) {
         clock_gettime(CLOCK_MONOTONIC, &start_time);
-        long bytes_sent_i = send(client_sock, data, DATA_SIZE, 0);
+        long bytes_sent_i = send(client_sock, data, BUFFER_SIZE, 0);
         if (bytes_sent_i < 0) {
             perror("Data send failed");
             break;
@@ -210,7 +209,7 @@ void run_tcp_upload_test(char *address, int port, int duration) {
     int iteration = 1;
     while (total_elapsed_time < duration) {
         clock_gettime(CLOCK_MONOTONIC, &start_time);
-        long bytes_sent_i = send(client_sock, data, DATA_SIZE, 0);
+        long bytes_sent_i = send(client_sock, data, BUFFER_SIZE, 0);
         if (bytes_sent_i < 0) {
             perror("Data send failed");
             break;
@@ -238,14 +237,14 @@ void run_tcp_download_test(char *address, int port, int duration) {
     int client_sock = create_tcp_socket(address, port);
     send(client_sock, "download", strlen("download"), 0);
 
-    char *data = malloc(DATA_SIZE);
+    char *data = malloc(BUFFER_SIZE);
     struct timespec start_time, end_time;
     double total_elapsed_time = 0;
     long bytes_recieved = 0;
     int iteration = 1;
     while (total_elapsed_time < duration) {
         clock_gettime(CLOCK_MONOTONIC, &start_time);
-        long bytes_recieved_i = recv(client_sock, data, DATA_SIZE, 0);
+        long bytes_recieved_i = recv(client_sock, data, BUFFER_SIZE, 0);
         if (bytes_recieved_i < 0) {
             perror("Data recieve failed");
             break;
@@ -329,6 +328,128 @@ void run_ping_test(char *address, int port, int size, int duration, int interval
     }
     printf("Jitter: %.4f\n", jitter);
     printf("Packet Loss: %.2f%%\n", (packets_lost/(float)duration)*100);
+
+    close(sock);
+}
+
+void run_icmp_ping_test(char *address, int port, int size, int duration, int interval) {
+
+    int sock;
+    struct sockaddr_in server_addr;
+    struct hostent *host;
+    char send_packet[sizeof(struct icmphdr) + size];
+    char recv_packet[BUFFER_SIZE];
+    struct icmphdr *icmp_hdr;
+    struct iphdr *recv_ip;
+    int bytes_received;
+
+    // Create raw socket for ICMP
+    if ((sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) < 0) {
+        perror("ICMP socket creation failed. Need to run as root.");
+        return; // Exit gracefully without calling exit()
+    }
+
+    // Set socket timeout (2 seconds)
+    struct timeval timeout;
+    timeout.tv_sec = 2;
+    timeout.tv_usec = 0;
+    if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
+        perror("setsockopt failed");
+        close(sock);
+        return;
+    }
+
+    // Resolve host
+    host = gethostbyname(address);
+    if (!host) {
+        fprintf(stderr, "Failed to resolve hostname: %s\n", address);
+        close(sock);
+        return;
+    }
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    // While port is not used by ICMP, we keep it consistent.
+    server_addr.sin_port = htons(port);
+    memcpy(&server_addr.sin_addr, host->h_addr, host->h_length);
+
+    // Prepare ICMP Echo Request
+    icmp_hdr = (struct icmphdr*)send_packet;
+    icmp_hdr->type = ICMP_ECHO;
+    icmp_hdr->code = 0;
+    icmp_hdr->un.echo.id = getpid();
+    icmp_hdr->un.echo.sequence = 0;
+    memset(send_packet + sizeof(struct icmphdr), 'A', size);
+    icmp_hdr->checksum = 0;
+    icmp_hdr->checksum = calculate_checksum((unsigned short*)send_packet, sizeof(send_packet));
+
+    int sent_packets = 0;
+    int received_packets = 0;
+    double rtts[1000]; // Ensure 1000 is large enough for your duration
+    int max_rtts = (int)(sizeof(rtts) / sizeof(rtts[0]));
+
+    for (int i = 0; i < duration; i++) {
+        // Increment sequence number each iteration
+        icmp_hdr->un.echo.sequence = i + 1;
+        icmp_hdr->checksum = 0;
+        icmp_hdr->checksum = calculate_checksum((unsigned short*)send_packet, sizeof(send_packet));
+
+        struct timeval send_time, recv_time;
+        gettimeofday(&send_time, NULL);
+
+        // Send ICMP Echo Request
+        if (sendto(sock, send_packet, sizeof(send_packet), 0, 
+                   (struct sockaddr*)&server_addr, sizeof(server_addr)) <= 0) {
+            perror("Ping send failed");
+            // Don't break here, continue to next iteration
+            sleep(interval);
+            continue;
+        }
+        sent_packets++;
+
+        socklen_t addr_len = sizeof(server_addr);
+        bytes_received = recvfrom(sock, recv_packet, sizeof(recv_packet), 0,
+                                  (struct sockaddr*)&server_addr, &addr_len);
+        if (bytes_received <= 0) {
+            printf("Ping %d: Request timed out.\n", i + 1);
+            sleep(interval);
+            continue;
+        }
+
+        gettimeofday(&recv_time, NULL);
+
+        // Parse received packet
+        recv_ip = (struct iphdr*)recv_packet;
+        int ip_header_len = recv_ip->ihl * 4;
+        struct icmphdr *recv_icmp = (struct icmphdr*)(recv_packet + ip_header_len);
+
+        if (recv_icmp->type == ICMP_ECHOREPLY && recv_icmp->un.echo.id == getpid()) {
+            double rtt = (recv_time.tv_sec - send_time.tv_sec) +
+                         (recv_time.tv_usec - send_time.tv_usec)/1e6;
+            rtt *= 1000.0; // Convert to milliseconds
+            if (received_packets < max_rtts) {
+                rtts[received_packets++] = rtt;
+            }
+            printf("Ping %d: RTT = %.4f ms\n", i + 1, rtt);
+        } else {
+            printf("Ping %d: Received non-echo reply or mismatched ID.\n", i + 1);
+        }
+
+        sleep(interval);
+    }
+
+    // Calculate Jitter
+    double jitter = 0.0;
+    if (received_packets > 1) {
+        for (int i = 1; i < received_packets; i++) {
+            jitter += fabs(rtts[i] - rtts[i-1]);
+        }
+        jitter /= (received_packets - 1);
+    }
+
+    printf("Jitter: %.4f ms\n", jitter);
+    double packet_loss = (sent_packets == 0) ? 0.0 : ((double)(sent_packets - received_packets)/sent_packets)*100.0;
+    printf("Packet Loss: %.2f%%\n", packet_loss);
 
     close(sock);
 }

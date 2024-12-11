@@ -10,9 +10,9 @@ void print_usage() {
     printf("Options:\n");
     printf("  -m, --mode       Mode of operation: server or client\n");
     printf("  -t, --test       Test type: upload, download, ping\n");
-    printf("  -r, --protocol   Protocol used for upload/download tests, tcp or udp (default: T)\n");
-    printf("  -a, --address    Server address (for client mode)\n");
-    printf("  -p, --port       Port number (default: 8080)\n");
+    printf("  -r, --protocol   Protocol used for tests:\n");
+    printf("                   For upload/download: tcp or udp (default: tcp)\n");
+    printf("                   For ping: udp or icmp (default: udp)\n");
     printf("  -s, --size       Packet size in bytes for ping test (default: 64)\n");
     printf("  -d, --duration   Test duration in seconds (packets number for ping) (default: 10)\n");
     printf("  -i, --interval   Interval Between Pings in Seconds (default: 1)\n");
@@ -60,9 +60,16 @@ int main(int argc, char *argv[]) {
             print_usage();
         }
 
-        if (strcmp(protocol, "tcp") != 0  && strcmp(protocol, "udp") != 0) {
-            fprintf(stderr, "Error: Invalid Protocol, use T (TCP) or U (UDP).\n");
-            print_usage();
+        if (strcmp(test, "ping") == 0) {
+            if (strcmp(protocol, "udp") != 0 && strcmp(protocol, "icmp") != 0) {
+                fprintf(stderr, "Error: Invalid protocol for ping. Use udp or icmp.\n");
+                print_usage();
+            }
+        } else {
+            if (strcmp(protocol, "tcp") != 0 && strcmp(protocol, "udp") != 0) {
+                fprintf(stderr, "Error: Invalid protocol for upload/download. Use tcp or udp.\n");
+                print_usage();
+            }
         }
 
         // Handle the test type for client mode
@@ -81,7 +88,11 @@ int main(int argc, char *argv[]) {
                 run_udp_download_test(address, port, duration);
             }
         } else if (strcmp(test, "ping") == 0) {
-            run_ping_test(address, port, size, duration, interval);
+             if (strcmp(protocol, "icmp") == 0) {
+                run_icmp_ping_test(address, port, size, duration, interval);
+            } else {
+                run_ping_test(address, port, size, duration, interval);
+            }
         } else {
             fprintf(stderr, "Invalid test type: %s\n", test);
             print_usage();
