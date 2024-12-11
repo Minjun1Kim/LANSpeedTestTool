@@ -34,6 +34,16 @@ gboolean sockaddr_in_equal(gconstpointer a, gconstpointer b) {
            (addr1->sin_port == addr2->sin_port);
 }
 
+static void update_hash_table(GHashTable *table, struct sockaddr_in *key, int value) {
+    int *val = malloc(sizeof(int));
+    if (!val) {
+        perror("Memory allocation failed: val");
+        return;
+    }
+    *val = value;
+    g_hash_table_insert(table, key, val);
+}
+
 int create_socket(int type, int port) {
     int server_sock;
     struct sockaddr_in server_addr;
@@ -134,7 +144,7 @@ void handle_tcp_download(int client_sock) {
     gettimeofday(&start, NULL);
     while (1) {
         if (send(client_sock, data, BUFFER_SIZE, 0) < 0) {
-            perror("Data send failed");
+            perror("TCP download: Send failed");
             break;
         }
     }
@@ -143,34 +153,6 @@ void handle_tcp_download(int client_sock) {
     long time_diff = (end.tv_sec - start.tv_sec) * 1000000L + (end.tv_usec - start.tv_usec);
     printf("Download Test: Sent %ld bytes for %ld seconds\n", BUFFER_SIZE * time_diff, time_diff);
 
-    free(data);
-}
-
-void handle_udp_upload(client_data_t* data) {
-    // Client sends data for some duration; we receive it and measure.
-    char buffer[BUFFER_SIZE];
-    long total_bytes = 0;
-    struct timeval start, end;
-    gettimeofday(&start, NULL);
-
-    while (1) {
-        int bytes = recvfrom(data->sockfd, buffer, sizeof(buffer), 0,
-                             (struct sockaddr *)&data->client_addr, &data->addr_len);
-        if (bytes <= 0) {
-            // Possibly timeout or client done
-            break;
-        }
-        total_bytes += bytes;
-    }
-
-    gettimeofday(&end, NULL);
-    long time_diff = (end.tv_sec - start.tv_sec)*1000000L+(end.tv_usec - start.tv_usec);
-    double mbps = 0.0;
-    if (time_diff > 0) {
-        mbps = (total_bytes * 8.0) / time_diff;
-    }
-    printf("UDP Upload Test: Received %ld bytes in %ld microseconds (~%.2f Mbps)\n",
-           total_bytes, time_diff, mbps);
     free(data);
 }
 
@@ -187,7 +169,7 @@ void *handle_udp_download(void* arg) {
     while (stop == 0) {
         if (sendto(data->sockfd, packet, BUFFER_SIZE, 0,
                    (struct sockaddr*)&data->client_addr, data->addr_len) < 0) {
-            perror("UDP send failed");
+            perror("UDP Download: Send failed");
             break;
         }
         int *val = (int*)g_hash_table_lookup(data->thread_table, &data->client_addr);
@@ -197,36 +179,6 @@ void *handle_udp_download(void* arg) {
     printf("UDP Download Test completed sending.\n");
     free(packet);
     return NULL;
-}
-
-void handle_ping(client_data_t* data) {
-    int packet_size;
-    int len = recvfrom(data->sockfd, &packet_size, sizeof(packet_size), 0,
-                       (struct sockaddr *)&data->client_addr, &data->addr_len);
-    if (len < 0) {
-        perror("Receive failed");
-        free(data);
-        return;
-    }
-
-    char buffer[packet_size];
-    while (1) {
-        memset(buffer, 0, packet_size);
-        len = recvfrom(data->sockfd, buffer, packet_size, 0,
-                       (struct sockaddr *)&data->client_addr, &data->addr_len);
-        if (len <= 0) {
-            break;
-        }
-
-        if (sendto(data->sockfd, buffer, len, 0,
-                   (struct sockaddr *)&data->client_addr, data->addr_len) < 0) {
-            perror("Send failed");
-            break;
-        }
-    }
-
-    printf("Ping test ended.\n");
-    free(data);
 }
 
 static void *handle_tcp_client(void* arg) {
@@ -335,43 +287,19 @@ static void *start_udp_thread(void* arg) {
             }
             pthread_detach(thread_id);
 
-            int *value = malloc(sizeof(int));
-            if (!value) {
-                perror("Memory allocation failed");
-                free(value);
-                break;
-            }
-            *value = 0;
-            g_hash_table_insert(thread_table, &client_data->client_addr, value);
+            int value = 0;
+            update_hash_table(thread_table, &client_data->client_addr, value);
         } else if (strncmp(buffer, "done", strlen("done")) == 0) {
-            int *value = malloc(sizeof(int));
-            if (!value) {
-                perror("Memory allocation failed");
-                free(value);
-                break;
-            }
-            *value = 1;
-            g_hash_table_insert(thread_table, &client_data->client_addr, value);
+            int value = 1;
+            update_hash_table(thread_table, &client_data->client_addr, value);
         } else if (strncmp(buffer, "ping", strlen("ping")) == 0) {
-            int *value = malloc(sizeof(int));
-            if (!value) {
-                perror("Memory allocation failed");
-                free(value);
-                break;
-            }
-            *value = 2;
-            g_hash_table_insert(thread_table, &client_data->client_addr, value);
-            printf("%d\n", *value);
+            int value = 2;
+            update_hash_table(thread_table, &client_data->client_addr, value);
         } else if (*((int*)g_hash_table_lookup(client_data->thread_table, &client_data->client_addr)) == 2) {
-            int *value = malloc(sizeof(int));
-            if (!value) {
-                perror("Memory allocation failed");
-                free(value);
-                break;
-            }
-            memcpy(value, buffer, sizeof(int));
-            printf("%d\n", *value);
-            g_hash_table_insert(thread_table, &client_data->client_addr, value);
+
+            int value;
+            memcpy(&value, buffer, sizeof(int));
+            update_hash_table(thread_table, &client_data->client_addr, value);
         } else if (*((int*)g_hash_table_lookup(client_data->thread_table, &client_data->client_addr)) > 2) {
             sendto(server_sock, buffer, BUFFER_SIZE, 0, (struct sockaddr *)&client_data->client_addr, client_data->addr_len);
         }
@@ -399,10 +327,10 @@ void start_server(int port) {
     pthread_t icmp_thread;
 
     if (pthread_create(&tcp_thread, NULL, start_tcp_thread, (void*)&tcp_sock) != 0) {
-        perror("Failed to create tcp server thread");
+        perror("Failed to create TCP server thread");
     }
     if (pthread_create(&udp_thread, NULL, start_udp_thread, (void*)&udp_sock) != 0) {
-        perror("Failed to create udp server thread");
+        perror("Failed to create UDP server thread");
     }
     if (pthread_create(&icmp_thread, NULL, start_icmp_thread, NULL) != 0) {
         perror("Failed to create ICMP server thread");

@@ -18,10 +18,10 @@ class CustomTopo(Topo):
         # Add links
         self.addLink(host1, switch1)
         self.addLink(host1, switch2)
-        self.addLink(switch1, host2)
-        self.addLink(switch2, host3)
+        self.addLink(switch1, host2, bw=10)    # 10 Mbps bandwidth
+        self.addLink(switch2, host3, bw=10)    # 10 Mbps bandwidth
 
-        self.addLink(switch1, switch2)
+        self.addLink(switch1, switch2, bw=10)  # 10 Mbps bandwidth
 
 def run():
     topo = CustomTopo()

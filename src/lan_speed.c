@@ -72,6 +72,10 @@ int main(int argc, char *argv[]) {
             }
         }
 
+        if (size < 4) {
+            fprintf(stderr, "Error: Packet size must be at least 4 bytes.\n");
+        }
+
         // Handle the test type for client mode
         if (strcmp(test, "upload") == 0) {
             if (strcmp(protocol, "tcp") == 0) {

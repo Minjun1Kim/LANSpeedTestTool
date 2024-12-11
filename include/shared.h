@@ -16,10 +16,4 @@ typedef struct {
     GHashTable* thread_table;
 } client_data_t;
 
-struct packet {
-    struct timespec timestamp;  // Timestamp of when packet was sent
-    size_t length;
-    char data[];                // Flexible array member for variable-size data
-};
-
 #endif
