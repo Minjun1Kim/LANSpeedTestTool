@@ -2,6 +2,8 @@
 
 This tool simulates a simple LAN speed test similar to `iperf`. It measures upload, download, ping, and jitter in a simulated or real network environment.
 
+![image](https://github.com/user-attachments/assets/3514f1b3-5fff-46c4-85cc-96a09ee4b204)
+
 ## Features
 - Upload speed test: measures throughput from client to server.
 - Download speed test: measures throughput from server to client.
