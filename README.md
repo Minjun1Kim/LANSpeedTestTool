@@ -11,15 +11,22 @@ This tool simulates a simple LAN speed test similar to `iperf`. It measures uplo
 - Jitter test: measures variations in RTT using TCP.
 
 ## Installation
-1. Clone the repository.
-2. Compile the program using the `Makefile`:
+1. **Install Mininet** (for testing):
+    - **Using a VM**:
+        - Install & Setup the Mininet VM from [Mininet Official Website](http://mininet.org/download/). 
+        - Recommended: use Mininet VM image provided by Marcelo.
+2. ssh into Mininet VM.
+3. Clone the repository and change directory into the project
+4. Compile the program using the `Makefile`:
 
     ```bash
     make
     ```
-3. **Install Mininet** (for testing):
-    - **Using a VM**:
-        - Install the Mininet VM from [Mininet Official Website](http://mininet.org/download/).
+5. Install the `glib.h` library
+```shell
+sudo apt-get install libglib2.0-dev
+```
+
 
 
 ## Usage
