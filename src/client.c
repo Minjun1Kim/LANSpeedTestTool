@@ -129,7 +129,9 @@ void run_udp_upload_test(char *address, int port, int duration) {
         bytes_sent += BUFFER_SIZE;
     }
 
-    printf("UDP Upload Test: Sent %ld bytes in %d seconds\n", bytes_sent, duration);
+    double megabytes = (double)bytes_sent / (1024.0 * 1024.0);
+
+    printf("UDP Upload Test: Sent %.2f MB in %d seconds\n", megabytes, duration);
 
     free(data);
     close(sock);
@@ -169,15 +171,21 @@ void run_udp_download_test(char *address, int port, int duration) {
         }
     }
 
+    double megabytes = (double)bytes_received / (1024.0 * 1024.0);
     double mbps = 0.0;
+
     gettimeofday(&now, NULL);
+
     long total_time = (now.tv_sec - start.tv_sec)*1000000L+(now.tv_usec - start.tv_usec);
+    double total_seconds = total_time / 1000000.0;
+
     if (total_time > 0) {
-        mbps = (bytes_received * 8.0) / total_time;
+        mbps = megabytes / total_seconds;
     }
 
-    printf("UDP Download Test: Received %ld bytes in %d seconds (~%.2f Mbps)\n",
-           bytes_received, duration, mbps);
+
+    printf("UDP Download Test: Received %.2f MB in %d seconds (~%.2f MB/s)\n",
+           megabytes, duration, mbps);
 
     free(buffer);
     close(sock);
@@ -222,8 +230,10 @@ void run_tcp_upload_test(char *address, int port, int duration) {
         total_elapsed_time += time_taken;
         if (total_elapsed_time >= iteration) {
             double iter_elapsed_time = total_elapsed_time - iteration + 1;
-            printf("Upload Test: Sent %ld bytes in %.6f miliseconds (~%.2f Mbps)\n",
-                    bytes_sent, iter_elapsed_time * 1000, (bytes_sent * 8.0) / iter_elapsed_time / 1e6);
+            double megabytes = (double)bytes_sent / (1024.0 * 1024.0);
+
+            printf("Upload Test: Sent %.2f MB in %.2f seconds (~%.2f MB/S)\n",
+                    megabytes, iter_elapsed_time, (megabytes / iter_elapsed_time));
             iteration++;
             bytes_sent = 0;
         }
@@ -256,8 +266,10 @@ void run_tcp_download_test(char *address, int port, int duration) {
         total_elapsed_time += time_taken;
         if (total_elapsed_time >= iteration) {
             double iter_elapsed_time = total_elapsed_time - iteration + 1;
-            printf("Download Test: Recieved %ld bytes in %.6f miliseconds (~%.2f Mbps)\n",
-                    bytes_recieved, iter_elapsed_time * 1000, (bytes_recieved * 8.0) / iter_elapsed_time / 1e6);
+            double megabytes = (double)bytes_recieved / (1024.0 * 1024.0);
+
+            printf("Download Test: Recieved %.2f MB in %.6f seconds (~%.2f MB/S)\n",
+                    megabytes, iter_elapsed_time, (megabytes / iter_elapsed_time));
             iteration++;
             bytes_recieved = 0;
         }
