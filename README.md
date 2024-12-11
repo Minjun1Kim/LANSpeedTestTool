@@ -139,7 +139,10 @@ A simple Flask-based web UI is provided in the /web directory: <br/>
 git fetch origin
 git checkout -b web origin/web
 ```
-
+0. Run the server
+```shell
+./lan_speed -m server -p 8080
+```
 1. Navigate to the /web directory:
 
 ```shell
