@@ -73,6 +73,13 @@ mininet> h2 ./lan_speed -m client -t ping -a 10.0.0.1 -p 8080 -s 64 -d 10 -r udp
 mininet> h3 ./lan_speed -m client -t ping -a 10.0.0.1 -p 8080 -s 64 -d 10 -r udp
 ```
 
+- Concurrent ICMP Ping Tests
+```shell
+mininet> h2 sudo ./lan_speed -m client -t ping -r icmp -a 10.0.0.1 -p 8080 -s 64 -d 10 -i 1 > h2_ping.log &                                                                                                       │
+mininet> h3 sudo ./lan_speed -m client -t ping -r icmp -a 10.0.0.1 -p 8080 -s 64 -d 10 -i 1
+```
+
+
 - Ping and Download Concurrently
 ```shell
 mininet> h2 ./lan_speed -m client -t ping -a 10.0.0.1 -p 8080 -s 128 -d 10 -r udp > h2_ping_concurrent.log &
@@ -110,26 +117,6 @@ mininet> h3 cat h3_upload_tcp.log
 
 
 
-## Example
-1. Start the server on the desired port:
-
-    ```bash
-    ./lan_speed -m server -p 8080
-    ```
-
-2. Run the client:
-
-    ```bash
-    ./lan_speed -m client -t upload -a 127.0.0.1 -p 8080 -s 1024 -d 10
-    ```
-
-    ```bash
-    ./lan_speed -m client -t download -a 127.0.0.1 -p 8080 -s 1024 -d 10
-    ```
-
-    ```bash
-    ./lan_speed -m client -t ping -a 127.0.0.1 -d 5
-    ```
 
     ```bash
     ./lan_speed -m client -t jitter -a 127.0.0.1 -p 8080 -s 1024 -n 50
