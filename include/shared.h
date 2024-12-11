@@ -1,5 +1,6 @@
 #include <arpa/inet.h>
 #include <time.h>
+#include <glib.h>
 
 #ifndef SHARED_H
 #define SHARED_H
@@ -12,7 +13,7 @@ typedef struct {
     int sockfd;
     struct sockaddr_in client_addr;
     socklen_t addr_len;
-    char test[10];
+    GHashTable* thread_table;
 } client_data_t;
 
 struct packet {

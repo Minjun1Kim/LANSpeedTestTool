@@ -12,6 +12,27 @@
 #include <netinet/ip.h>
 #include <sys/socket.h>
 #include <signal.h>
+#include <glib.h>
+
+#define BUFFER_SIZE 32768
+
+guint sockaddr_in_hash(gconstpointer key) {
+    const struct sockaddr_in *addr = (const struct sockaddr_in*)key;
+    guint hash = 0;
+    // Combine the hash of the IP address and port
+    hash = g_int_hash(&addr->sin_addr.s_addr);  // Hash the IP address
+    hash = hash * 31 + g_int_hash(&addr->sin_port);  // Hash the port
+    return hash;
+}
+
+// Custom equality function for struct sockaddr_in
+gboolean sockaddr_in_equal(gconstpointer a, gconstpointer b) {
+    const struct sockaddr_in *addr1 = (const struct sockaddr_in*)a;
+    const struct sockaddr_in *addr2 = (const struct sockaddr_in*)b;
+    // Compare both IP address and port
+    return (addr1->sin_addr.s_addr == addr2->sin_addr.s_addr) &&
+           (addr1->sin_port == addr2->sin_port);
+}
 
 int create_socket(int type, int port) {
     int server_sock;
@@ -160,7 +181,8 @@ void handle_udp_upload(client_data_t* data) {
     free(data);
 }
 
-void handle_udp_download(client_data_t* data) {
+void *handle_udp_download(void* arg) {
+    client_data_t* data = (client_data_t*)arg;
     // For UDP download: we continuously send data until client stops or duration passes.
     // Client can measure how much it got.
     char *packet = malloc(BUFFER_SIZE);
@@ -168,25 +190,20 @@ void handle_udp_download(client_data_t* data) {
 
     // Just send data for a while; assume client times out after duration
     // In a more robust design, you'd signal when to stop.
-    struct timeval start, now;
-    gettimeofday(&start, NULL);
-    while (1) {
+    int stop = 0;
+    while (stop == 0) {
         if (sendto(data->sockfd, packet, BUFFER_SIZE, 0,
                    (struct sockaddr*)&data->client_addr, data->addr_len) < 0) {
             perror("UDP send failed");
             break;
         }
-        gettimeofday(&now, NULL);
-        long elapsed = (now.tv_sec - start.tv_sec)*1000000L+(now.tv_usec - start.tv_usec);
-        // For demonstration, send data for ~5 seconds only:
-        if (elapsed > 5000000L) {
-            break;
-        }
+        int *val = (int*)g_hash_table_lookup(data->thread_table, &data->client_addr);
+        stop = *val;
     }
 
     printf("UDP Download Test completed sending.\n");
     free(packet);
-    free(data);
+    return NULL;
 }
 
 void handle_ping(client_data_t* data) {
@@ -319,36 +336,58 @@ static void *start_tcp_thread(void* arg) {
 
 static void *start_udp_thread(void* arg) {
     int server_sock = *((int*)arg);
+    GHashTable* thread_table = g_hash_table_new(sockaddr_in_hash, sockaddr_in_equal);
+    char buffer[BUFFER_SIZE];
+    client_data_t *client_data = malloc(sizeof(client_data_t));
+    if (!client_data) {
+            perror("Malloc failed");
+            return NULL;
+        }
+    client_data->sockfd = server_sock;
+    client_data->addr_len = sizeof(client_data->client_addr);
+    client_data->thread_table = thread_table;
 
     while (1) {
-        client_data_t *client_data = malloc(sizeof(client_data_t));
-        if (!client_data) {
-            perror("Malloc failed");
-            continue;
-        }
-
-        client_data->sockfd = server_sock;
-        client_data->addr_len = sizeof(client_data->client_addr);
-
-        memset(client_data->test, 0, sizeof(client_data->test));
-        int len = recvfrom(server_sock, client_data->test, sizeof(client_data->test)-1, 0,
+        int len = recvfrom(server_sock, buffer, BUFFER_SIZE, 0,
                            (struct sockaddr *)&client_data->client_addr, &client_data->addr_len);
         if (len < 0) {
             perror("Receive failed");
             free(client_data);
             continue;
         }
+        buffer[len] = '\0';
 
-        client_data->test[len] = '\0';
-        printf("UDP request: %s\n", client_data->test);
+        if (len < 10) {
+            if (strcmp(buffer, "download") == 0) {
+                printf("UDP request: %s\n", buffer);
 
-        pthread_t thread_id;
-        if (pthread_create(&thread_id, NULL, &handle_udp_client, client_data) != 0) {
-            perror("Thread creation failed");
-            free(client_data);
-            continue;
+                pthread_t thread_id;
+                if (pthread_create(&thread_id, NULL, &handle_udp_download, client_data) != 0) {
+                    perror("Thread creation failed");
+                    free(client_data);
+                    continue;
+                }
+                pthread_detach(thread_id);
+
+                int *value = malloc(sizeof(int));
+                if (!value) {
+                    perror("Memory allocation failed");
+                    free(value);
+                    break;
+                }
+                *value = 0;
+                g_hash_table_insert(thread_table, &client_data->client_addr, value);
+            } else if (strcmp(buffer, "done") == 0) {
+                int *value = malloc(sizeof(int));
+                if (!value) {
+                    perror("Memory allocation failed");
+                    free(value);
+                    break;
+                }
+                *value = 1;
+                g_hash_table_insert(thread_table, &client_data->client_addr, value);
+            }
         }
-        pthread_detach(thread_id);
     }
 
     close(server_sock);

@@ -1,5 +1,6 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -Iinclude -pthread
+CFLAGS = -Wall -Wextra -Iinclude -pthread `pkg-config --cflags glib-2.0`
+LIBS = `pkg-config --libs glib-2.0`  # Define the libraries to link with
 TARGET = lan_speed
 SRC_DIR = src
 INCLUDE_DIR = include
@@ -9,7 +10,7 @@ HEADERS = $(INCLUDE_DIR)/server.h $(INCLUDE_DIR)/client.h $(INCLUDE_DIR)/shared.
 all: $(TARGET)
 
 $(TARGET): $(SOURCES) $(HEADERS)
-	$(CC) $(CFLAGS) -o $(TARGET) $(SOURCES)
+	$(CC) $(CFLAGS) -o $(TARGET) $(SOURCES) $(LIBS)  # Add $(LIBS) for linking
 
 clean:
 	rm -f $(TARGET)

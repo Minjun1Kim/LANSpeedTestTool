@@ -64,6 +64,18 @@ static int create_udp_socket(char *address, int port, struct sockaddr_in *server
         close(sock);
         exit(EXIT_FAILURE);
     }
+
+    struct timeval timeout;
+    timeout.tv_sec = 2;  // Set timeout for 2 seconds
+    timeout.tv_usec = 0;
+
+    // Set socket timeout using setsockopt
+    if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
+        perror("setsockopt failed");
+        close(sock);
+        exit(EXIT_FAILURE);
+    }
+
     return sock;
 }
 
@@ -79,8 +91,10 @@ void run_udp_upload_test(char *address, int port, int duration) {
         return;
     }
 
-    // Wait for ack
-    char ack[4];
+    char *data = malloc(BUFFER_SIZE);
+    memset(data, 'A', BUFFER_SIZE);
+
+    struct timespec start_time, end_time;
     socklen_t addr_len = sizeof(server_addr);
     if (recvfrom(sock, ack, sizeof(ack)-1, 0, (struct sockaddr*)&server_addr, &addr_len) <= 0) {
         perror("Failed to receive ack");
@@ -91,25 +105,47 @@ void run_udp_upload_test(char *address, int port, int duration) {
     char *data = malloc(BUFFER_SIZE);
     memset(data, 'A', BUFFER_SIZE);
 
-    struct timeval start, now;
-    gettimeofday(&start, NULL);
-    long bytes_sent = 0;
-    while (1) {
-        gettimeofday(&now, NULL);
-        long elapsed = (now.tv_sec - start.tv_sec)*1000000L + (now.tv_usec - start.tv_usec);
-        double sec = elapsed / 1000000.0;
-        if (sec >= duration) {
-            break;
-        }
-
-        if (sendto(sock, data, DATA_SIZE, 0, (struct sockaddr*)&server_addr, addr_len) < 0) {
-            perror("UDP data send failed");
-            break;
-        }
-        bytes_sent += BUFFER_SIZE;
+    struct timespec start_time, end_time;
+    socklen_t addr_len = sizeof(server_addr);
+    double total_elapsed_time = 0;
+    while (total_elapsed_time < 0.1) {
+        clock_gettime(CLOCK_MONOTONIC, &start_time);
+        long bytes_sent_i = sendto(sock, data, BUFFER_SIZE, 0, (struct sockaddr*)&server_addr, addr_len);
+        if (bytes_sent_i < 0) {
+                perror("Data send failed1");
+                break;
+            }
+        clock_gettime(CLOCK_MONOTONIC, &end_time);
+        double time_taken = (end_time.tv_sec - start_time.tv_sec) +
+                            (end_time.tv_nsec - start_time.tv_nsec) / 1e9;
+        total_elapsed_time += time_taken;
     }
 
-    printf("UDP Upload Test: Sent %ld bytes in %d seconds\n", bytes_sent, duration);
+    // Step 3: Start the upload test
+    total_elapsed_time = 0;
+    long bytes_sent = 0;
+    int iteration = 1;
+    while (total_elapsed_time < duration) {
+        clock_gettime(CLOCK_MONOTONIC, &start_time);
+        long bytes_sent_i = sendto(sock, data, BUFFER_SIZE, 0, (struct sockaddr*)&server_addr, addr_len);
+        if (bytes_sent_i < 0) {
+                perror("Data send failed2");
+                break;
+            }
+        clock_gettime(CLOCK_MONOTONIC, &end_time);
+        bytes_sent += bytes_sent_i;
+        double time_taken = (end_time.tv_sec - start_time.tv_sec) +
+                            (end_time.tv_nsec - start_time.tv_nsec) / 1e9;
+
+        total_elapsed_time += time_taken;
+        if (total_elapsed_time >= iteration) {
+            double iter_elapsed_time = total_elapsed_time - iteration + 1;
+            printf("Upload Test: Sent %ld bytes in %.6f miliseconds (~%.2f Mbps)\n",
+                    bytes_sent, iter_elapsed_time * 1000, (bytes_sent * 8.0) / iter_elapsed_time / 1e6);
+            iteration++;
+            bytes_sent = 0;
+        }
+    }
 
     free(data);
     close(sock);
@@ -126,46 +162,34 @@ void run_udp_download_test(char *address, int port, int duration) {
         return;
     }
 
-    // Wait for ack
-    char ack[4];
-    socklen_t addr_len = sizeof(server_addr);
-    if (recvfrom(sock, ack, sizeof(ack)-1, 0, (struct sockaddr*)&server_addr, &addr_len) <= 0) {
-        perror("Failed to receive ack");
-        close(sock);
-        return;
-    }
-
     char *buffer = malloc(BUFFER_SIZE);
-    struct timeval start, now;
-    gettimeofday(&start, NULL);
-    long bytes_received = 0;
-
-    while (1) {
-        gettimeofday(&now, NULL);
-        long elapsed = (now.tv_sec - start.tv_sec)*1000000L + (now.tv_usec - start.tv_usec);
-        double sec = elapsed / 1000000.0;
-        if (sec >= duration) {
-            break;
-        }
-
-        int bytes = recvfrom(sock, buffer, DATA_SIZE, 0, (struct sockaddr*)&server_addr, &addr_len);
-        if (bytes > 0) {
-            bytes_received += bytes;
-        } else if (bytes < 0) {
-            perror("UDP receive failed");
-            break;
+    struct timespec start_time, end_time;
+    socklen_t addr_len = sizeof(server_addr);
+    double total_elapsed_time = 0;
+    long bytes_recieved = 0;
+    int iteration = 1;
+    while (total_elapsed_time < duration) {
+        clock_gettime(CLOCK_MONOTONIC, &start_time);
+        long bytes_recieved_i = recvfrom(sock, buffer, BUFFER_SIZE, 0, (struct sockaddr*)&server_addr, &addr_len);
+        if (bytes_recieved_i < 0) {
+                perror("Data recieve failed");
+                break;
+            }
+        clock_gettime(CLOCK_MONOTONIC, &end_time);
+        bytes_recieved += bytes_recieved_i;
+        double time_taken = (end_time.tv_sec - start_time.tv_sec) +
+                            (end_time.tv_nsec - start_time.tv_nsec) / 1e9;
+        total_elapsed_time += time_taken;
+        if (total_elapsed_time >= iteration) {
+            double iter_elapsed_time = total_elapsed_time - iteration + 1;
+            printf("Download Test: Recieved %ld bytes in %.6f miliseconds (~%.2f Mbps)\n",
+                    bytes_recieved, iter_elapsed_time * 1000, (bytes_recieved * 8.0) / iter_elapsed_time / 1e6);
+            iteration++;
+            bytes_recieved = 0;
         }
     }
 
-    double mbps = 0.0;
-    gettimeofday(&now, NULL);
-    long total_time = (now.tv_sec - start.tv_sec)*1000000L+(now.tv_usec - start.tv_usec);
-    if (total_time > 0) {
-        mbps = (bytes_received * 8.0) / total_time;
-    }
-
-    printf("UDP Download Test: Received %ld bytes in %d seconds (~%.2f Mbps)\n",
-           bytes_received, duration, mbps);
+    sendto(sock, "done", 5, 0, (struct sockaddr*)&server_addr, addr_len);
 
     free(buffer);
     close(sock);
@@ -185,7 +209,7 @@ void run_tcp_upload_test(char *address, int port, int duration) {
         clock_gettime(CLOCK_MONOTONIC, &start_time);
         long bytes_sent_i = send(client_sock, data, BUFFER_SIZE, 0);
         if (bytes_sent_i < 0) {
-                perror("Data send failed");
+                perror("Data send failed3");
                 break;
             }
         clock_gettime(CLOCK_MONOTONIC, &end_time);
@@ -202,7 +226,7 @@ void run_tcp_upload_test(char *address, int port, int duration) {
         clock_gettime(CLOCK_MONOTONIC, &start_time);
         long bytes_sent_i = send(client_sock, data, BUFFER_SIZE, 0);
         if (bytes_sent_i < 0) {
-                perror("Data send failed");
+                perror("Data send failed4");
                 break;
             }
         clock_gettime(CLOCK_MONOTONIC, &end_time);
