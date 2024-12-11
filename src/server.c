@@ -1,13 +1,17 @@
 #include "../include/server.h"
+#include "../include/shared.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/time.h>
 #include <pthread.h>
-#include <stdio.h>
-
-#define BUFFER_SIZE 32768
+#include <arpa/inet.h>
+#include <errno.h>
+#include <netinet/ip_icmp.h>
+#include <netinet/ip.h>
+#include <sys/socket.h>
+#include <signal.h>
 
 int create_socket(int type, int port) {
     int server_sock;
@@ -16,6 +20,20 @@ int create_socket(int type, int port) {
     server_sock = socket(AF_INET, type, 0);
     if (server_sock < 0) {
         perror("Socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    int opt = 1;
+    if (setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        perror("setsockopt SO_REUSEADDR failed");
+        close(server_sock);
+        exit(EXIT_FAILURE);
+    }
+
+    int opt = 1;
+    if (setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        perror("setsockopt SO_REUSEADDR failed");
+        close(server_sock);
         exit(EXIT_FAILURE);
     }
 
@@ -30,6 +48,42 @@ int create_socket(int type, int port) {
     }
 
     return server_sock;
+}
+
+void handle_icmp_ping(int icmp_sock) {
+    char buffer[BUFFER_SIZE];
+    struct sockaddr_in client_addr;
+    socklen_t addr_len = sizeof(client_addr);
+
+    while (1) {
+        // Receive ICMP Echo Request
+        int bytes_received = recvfrom(icmp_sock, buffer, sizeof(buffer), 0,
+                                      (struct sockaddr *)&client_addr, &addr_len);
+        if (bytes_received < 0) {
+            if (errno == EINTR) continue; // Handle interrupt signal gracefully
+            perror("ICMP Receive failed");
+            continue;
+        }
+
+        struct iphdr *ip_hdr = (struct iphdr *)buffer;
+        int ip_header_len = ip_hdr->ihl * 4;
+        struct icmphdr *icmp_hdr = (struct icmphdr *)(buffer + ip_header_len);
+
+        if (icmp_hdr->type == ICMP_ECHO) {
+            // Prepare ICMP Echo Reply
+            icmp_hdr->type = ICMP_ECHOREPLY;
+            icmp_hdr->checksum = 0;
+            icmp_hdr->checksum = calculate_checksum((unsigned short *)icmp_hdr, bytes_received - ip_header_len);
+
+            // Send ICMP Echo Reply
+            if (sendto(icmp_sock, icmp_hdr, bytes_received - ip_header_len, 0,
+                       (struct sockaddr *)&client_addr, addr_len) < 0) {
+                perror("ICMP Send failed");
+            } else {
+                printf("ICMP Echo Reply sent to %s\n", inet_ntoa(client_addr.sin_addr));
+            }
+        }
+    }
 }
 
 void handle_tcp_upload(int client_sock) {
@@ -221,6 +275,20 @@ static void *handle_udp_client(void* arg) {
 }
 
 
+void* start_icmp_thread() {
+    int icmp_sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    if (icmp_sock < 0) {
+        perror("ICMP socket creation failed. Run as root.");
+        pthread_exit(NULL);
+    }
+
+    printf("ICMP Ping Handler started.\n");
+    handle_icmp_ping(icmp_sock);
+
+    close(icmp_sock);
+    pthread_exit(NULL);
+}
+
 static void *start_tcp_thread(void* arg) {
     int server_sock = *((int*)arg);
     socklen_t addr_size;
@@ -302,15 +370,21 @@ void start_server(int port) {
 
     pthread_t tcp_thread;
     pthread_t udp_thread;
+    pthread_t icmp_thread;
+
     if (pthread_create(&tcp_thread, NULL, start_tcp_thread, (void*)&tcp_sock) != 0) {
         perror("Failed to create tcp server thread");
     }
     if (pthread_create(&udp_thread, NULL, start_udp_thread, (void*)&udp_sock) != 0) {
         perror("Failed to create udp server thread");
     }
+    if (pthread_create(&icmp_thread, NULL, start_icmp_thread, NULL) != 0) {
+        perror("Failed to create ICMP server thread");
+    }
 
     pthread_join(tcp_thread, NULL);
     pthread_join(udp_thread, NULL);
+    pthread_join(icmp_thread, NULL);
 
     close(tcp_sock);
     close(udp_sock);
