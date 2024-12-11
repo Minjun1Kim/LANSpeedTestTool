@@ -19,7 +19,7 @@ def start_test():
     try:
         test_type = request.json.get('test_type')
         server_address = request.json.get('server_address')
-        port = request.json.get('port', 8000)
+        port = request.json.get('port', 8080)
         size = request.json.get('size', 1024)
         duration = request.json.get('duration', 10)
         num_packets = request.json.get('num_packets', 10)
