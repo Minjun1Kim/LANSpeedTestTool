@@ -51,13 +51,6 @@ int create_socket(int type, int port) {
         exit(EXIT_FAILURE);
     }
 
-    int opt = 1;
-    if (setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-        perror("setsockopt SO_REUSEADDR failed");
-        close(server_sock);
-        exit(EXIT_FAILURE);
-    }
-
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
     server_addr.sin_addr.s_addr = INADDR_ANY;
@@ -265,32 +258,6 @@ static void *handle_tcp_client(void* arg) {
     return NULL;
 }
 
-static void *handle_udp_client(void* arg) {
-    client_data_t* client_data = (client_data_t*)arg;
-
-    printf("Client connected\n");
-
-    if (sendto(client_data->sockfd, "ack", 4, 0, 
-               (struct sockaddr*)&client_data->client_addr, client_data->addr_len) < 0) {
-        perror("Send Ack failed");
-        free(client_data);
-        return NULL;
-    }
-
-    if (strcmp(client_data->test, "upload") == 0) {
-        handle_udp_upload(client_data);
-    } else if (strcmp(client_data->test, "download") == 0) {
-        handle_udp_download(client_data);
-    } else if (strcmp(client_data->test, "ping") == 0) {
-        handle_ping(client_data);
-    } else {
-        printf("Unknown test type: %s\n", client_data->test);
-    }
-
-    free(client_data);
-    return NULL; 
-}
-
 
 void* start_icmp_thread() {
     int icmp_sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
@@ -357,36 +324,56 @@ static void *start_udp_thread(void* arg) {
         }
         buffer[len] = '\0';
 
-        if (len < 10) {
-            if (strcmp(buffer, "download") == 0) {
-                printf("UDP request: %s\n", buffer);
+        if (strncmp(buffer, "download", strlen("download")) == 0) {
+            printf("UDP request: %s\n", buffer);
 
-                pthread_t thread_id;
-                if (pthread_create(&thread_id, NULL, &handle_udp_download, client_data) != 0) {
-                    perror("Thread creation failed");
-                    free(client_data);
-                    continue;
-                }
-                pthread_detach(thread_id);
-
-                int *value = malloc(sizeof(int));
-                if (!value) {
-                    perror("Memory allocation failed");
-                    free(value);
-                    break;
-                }
-                *value = 0;
-                g_hash_table_insert(thread_table, &client_data->client_addr, value);
-            } else if (strcmp(buffer, "done") == 0) {
-                int *value = malloc(sizeof(int));
-                if (!value) {
-                    perror("Memory allocation failed");
-                    free(value);
-                    break;
-                }
-                *value = 1;
-                g_hash_table_insert(thread_table, &client_data->client_addr, value);
+            pthread_t thread_id;
+            if (pthread_create(&thread_id, NULL, &handle_udp_download, client_data) != 0) {
+                perror("Thread creation failed");
+                free(client_data);
+                continue;
             }
+            pthread_detach(thread_id);
+
+            int *value = malloc(sizeof(int));
+            if (!value) {
+                perror("Memory allocation failed");
+                free(value);
+                break;
+            }
+            *value = 0;
+            g_hash_table_insert(thread_table, &client_data->client_addr, value);
+        } else if (strncmp(buffer, "done", strlen("done")) == 0) {
+            int *value = malloc(sizeof(int));
+            if (!value) {
+                perror("Memory allocation failed");
+                free(value);
+                break;
+            }
+            *value = 1;
+            g_hash_table_insert(thread_table, &client_data->client_addr, value);
+        } else if (strncmp(buffer, "ping", strlen("ping")) == 0) {
+            int *value = malloc(sizeof(int));
+            if (!value) {
+                perror("Memory allocation failed");
+                free(value);
+                break;
+            }
+            *value = 2;
+            g_hash_table_insert(thread_table, &client_data->client_addr, value);
+            printf("%d\n", *value);
+        } else if (*((int*)g_hash_table_lookup(client_data->thread_table, &client_data->client_addr)) == 2) {
+            int *value = malloc(sizeof(int));
+            if (!value) {
+                perror("Memory allocation failed");
+                free(value);
+                break;
+            }
+            memcpy(value, buffer, sizeof(int));
+            printf("%d\n", *value);
+            g_hash_table_insert(thread_table, &client_data->client_addr, value);
+        } else if (*((int*)g_hash_table_lookup(client_data->thread_table, &client_data->client_addr)) > 2) {
+            sendto(server_sock, buffer, BUFFER_SIZE, 0, (struct sockaddr *)&client_data->client_addr, client_data->addr_len);
         }
     }
 

@@ -96,17 +96,6 @@ void run_udp_upload_test(char *address, int port, int duration) {
 
     struct timespec start_time, end_time;
     socklen_t addr_len = sizeof(server_addr);
-    if (recvfrom(sock, ack, sizeof(ack)-1, 0, (struct sockaddr*)&server_addr, &addr_len) <= 0) {
-        perror("Failed to receive ack");
-        close(sock);
-        return;
-    }
-
-    char *data = malloc(BUFFER_SIZE);
-    memset(data, 'A', BUFFER_SIZE);
-
-    struct timespec start_time, end_time;
-    socklen_t addr_len = sizeof(server_addr);
     double total_elapsed_time = 0;
     while (total_elapsed_time < 0.1) {
         clock_gettime(CLOCK_MONOTONIC, &start_time);
@@ -323,19 +312,6 @@ void run_ping_test(char *address, int port, int size, int duration, int interval
         return;
     }
 
-    char ack[4];
-    socklen_t addr_len = sizeof(server_addr);
-    int len = recvfrom(sock, ack, 4, 0, (struct sockaddr *)&server_addr, &addr_len);
-    if (len < 0) {
-        perror("Receive failed1");
-        return;
-    }
-
-    if (strcmp(ack, "ack") != 0) {
-        perror("Receive ack failed");
-        return;
-    }
-
     if (sendto(sock, &size, sizeof(size), 0, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
         perror("Send packet size failed");
         return;
@@ -356,6 +332,7 @@ void run_ping_test(char *address, int port, int size, int duration, int interval
         }
 
         // Receive the ping reply from the server
+        socklen_t addr_len = sizeof(server_addr);
         if (recvfrom(sock, data, size, 0, (struct sockaddr*)&server_addr, &addr_len) < 0) {
             packets_lost++;
             perror("Ping receive failed");
